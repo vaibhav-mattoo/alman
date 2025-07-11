@@ -1,0 +1,6 @@
+- Alman --get-suggestions is slow on bash, need to figure out why
+- add source message on cli changes and maybe make an alias for sourcing on default
+- add eval line on install
+- detect if the database isnt updating for commands with >1 word or >=5 letters and  send a prompt to the user to add a "eval" line in .bashrc
+- remove --command from add
+-  change alias doesnt require the command as an arguement and also it doesnt work currently, messed with the alias list as well
