@@ -225,5 +225,9 @@ fn handle_operation(
             // Init is not available in TUI mode
             app.status_message = "Init command not available in TUI mode".to_string();
         }
+        Operation::InitData => {
+            // InitData is not available in TUI mode
+            app.status_message = "InitData command not available in TUI mode".to_string();
+        }
     }
 }

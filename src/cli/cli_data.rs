@@ -62,6 +62,8 @@ pub enum Operation {
         #[arg(value_enum, help = "Shell type to initialize (bash, zsh, fish, posix)")]
         shell: InitShell,
     },
+    #[command(hide = true)]
+    InitData,
 }
 
 #[derive(ValueEnum, Clone, Debug)]

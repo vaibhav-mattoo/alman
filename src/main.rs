@@ -342,6 +342,56 @@ fn main() {
                 let init_script = render_shell_init(shell.clone(), &opts);
                 println!("{}", init_script);
             }
+            Some(Operation::InitData) => {
+                // Initialize the .alman directory and files
+                if let Err(e) = ensure_data_directory() {
+                    eprintln!("Failed to create data directory: {}", e);
+                    return;
+                }
+                
+                // Create default config if it doesn't exist
+                if load_config().is_none() {
+                    let default_config = AppConfig {
+                        alias_file_paths: vec![crate::database::persistence::get_default_alias_file_path()],
+                    };
+                    if let Err(e) = save_config(&default_config) {
+                        eprintln!("Failed to save config: {}", e);
+                    }
+                }
+                
+                // Create empty database and deleted commands files if they don't exist
+                let db_path = get_database_path();
+                let deleted_commands_path = get_deleted_commands_path();
+                
+                if !std::path::Path::new(&db_path).exists() {
+                    let empty_db = Database {
+                        command_list: std::collections::BTreeSet::new(),
+                        reverse_command_map: std::collections::HashMap::new(),
+                        total_num_commands: 0,
+                        total_score: 0,
+                    };
+                    if let Err(e) = save_database(&empty_db, &db_path) {
+                        eprintln!("Failed to create database file: {}", e);
+                    }
+                }
+                
+                if !std::path::Path::new(&deleted_commands_path).exists() {
+                    let empty_deleted = DeletedCommands {
+                        deleted_commands: std::collections::BTreeSet::new(),
+                    };
+                    if let Err(e) = save_deleted_commands(&empty_deleted, &deleted_commands_path) {
+                        eprintln!("Failed to create deleted commands file: {}", e);
+                    }
+                }
+                
+                // Create default alias file if it doesn't exist
+                let default_alias_path = crate::database::persistence::get_default_alias_file_path();
+                if !std::path::Path::new(&default_alias_path).exists() {
+                    if let Err(e) = std::fs::write(&default_alias_path, "# Alman aliases file\n") {
+                        eprintln!("Failed to create alias file: {}", e);
+                    }
+                }
+            }
             None => {}
         }
     }
