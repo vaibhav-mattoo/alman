@@ -48,8 +48,9 @@ fn render_bash(opts: &ShellOpts) -> String {
     script.push_str(&format!("export ALMAN_BIN=\"{}\"\n\n", opts.app_path));
     
     script.push_str("alman_preexec() {\n");
-    script.push_str("    if [ -n \"$1\" ]; then\n");
-    script.push_str(&format!("        {} custom \"$1\" 2>/dev/null\n", opts.app_path));
+    script.push_str("    # Skip if no command or if it's an alman internal command\n");
+    script.push_str("    if [ -n \"$1\" ] && [[ \"$1\" != alman_source_aliases* ]] && [[ \"$1\" != alman_preexec* ]]; then\n");
+    script.push_str(&format!("        {} custom \"$1\" 2>/dev/null &\n", opts.app_path));
     script.push_str("    fi\n");
     script.push_str("}\n\n");
     
@@ -71,12 +72,13 @@ fn render_bash(opts: &ShellOpts) -> String {
     script.push_str("    fi\n");
     script.push_str("}\n\n");
     
-    // Use DEBUG trap for pre-execution hook
-    script.push_str("if [ -n \"$BASH_VERSION\" ] && [ -n \"$PS1\" ]; then\n");  // Limit to interactive shells
+    script.push_str("# Set up command tracking for interactive bash shells\n");
+    script.push_str("if [ -n \"$BASH_VERSION\" ] && [ -n \"$PS1\" ]; then\n");
+    script.push_str("    # Use DEBUG trap to capture commands before execution\n");
     script.push_str("    trap 'alman_preexec \"$BASH_COMMAND\"' DEBUG\n");
     script.push_str("fi\n\n");
     
-    script.push_str("# Source aliases on shell startup\n");
+    script.push_str("# Source aliases on shell startup (don't track this command)\n");
     script.push_str("alman_source_aliases\n");
     
     script
