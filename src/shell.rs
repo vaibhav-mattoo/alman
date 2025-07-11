@@ -48,10 +48,12 @@ fn render_bash(opts: &ShellOpts) -> String {
     script.push_str(&format!("export ALMAN_BIN=\"{}\"\n\n", opts.app_path));
     
     script.push_str("alman_preexec() {\n");
-    script.push_str("    # Skip if no command or if it's an alman internal command\n");
-    script.push_str("    if [ -n \"$1\" ] && [[ \"$1\" != alman_source_aliases* ]] && [[ \"$1\" != alman_preexec* ]]; then\n");
-    script.push_str(&format!("        {} custom \"$1\" 2>/dev/null &\n", opts.app_path));
+    script.push_str("    # Only track if we have a command and it's not an internal alman command\n");
+    script.push_str("    if [ -n \"$ALMAN_LAST_COMMAND\" ] && [[ \"$ALMAN_LAST_COMMAND\" != alman_source_aliases* ]] && [[ \"$ALMAN_LAST_COMMAND\" != alman_preexec* ]]; then\n");
+    script.push_str(&format!("        {} custom \"$ALMAN_LAST_COMMAND\" >/dev/null 2>&1\n", opts.app_path));
     script.push_str("    fi\n");
+    script.push_str("    # Clear the last command\n");
+    script.push_str("    unset ALMAN_LAST_COMMAND\n");
     script.push_str("}\n\n");
     
     script.push_str("alman_source_aliases() {\n");
@@ -74,8 +76,14 @@ fn render_bash(opts: &ShellOpts) -> String {
     
     script.push_str("# Set up command tracking for interactive bash shells\n");
     script.push_str("if [ -n \"$BASH_VERSION\" ] && [ -n \"$PS1\" ]; then\n");
-    script.push_str("    # Use DEBUG trap to capture commands before execution\n");
-    script.push_str("    trap 'alman_preexec \"$BASH_COMMAND\"' DEBUG\n");
+    script.push_str("    # Store the command before execution\n");
+    script.push_str("    trap 'ALMAN_LAST_COMMAND=\"$BASH_COMMAND\"' DEBUG\n");
+    script.push_str("    # Add our preexec to PROMPT_COMMAND\n");
+    script.push_str("    if [ -n \"$PROMPT_COMMAND\" ]; then\n");
+    script.push_str("        PROMPT_COMMAND=\"alman_preexec; $PROMPT_COMMAND\"\n");
+    script.push_str("    else\n");
+    script.push_str("        PROMPT_COMMAND=\"alman_preexec\"\n");
+    script.push_str("    fi\n");
     script.push_str("fi\n\n");
     
     script.push_str("# Source aliases on shell startup (don't track this command)\n");
