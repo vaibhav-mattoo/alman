@@ -57,6 +57,21 @@ fn is_system_command(cmd: &str) -> bool {
     false
 }
 
+fn print_source_message() {
+    let shell_path = std::env::var("SHELL").unwrap_or_default();
+    let shell_file = if shell_path.contains("zsh") {
+        "~/.zshrc"
+    } else if shell_path.contains("bash") {
+        "~/.bashrc"
+    } else if shell_path.contains("fish") {
+        "~/.config/fish/config.fish"
+    } else {
+        "your shell's config file"
+    };
+    // ANSI green: \x1b[32m ... \x1b[0m
+    println!("\nTo use your new aliases immediately, run: \x1b[32msource {}\x1b[0m", shell_file);
+}
+
 fn main() {
     // Intercept --help/-h to show dynamic default alias file path
     let args: Vec<String> = std::env::args().collect();
@@ -205,6 +220,7 @@ fn main() {
                 if let Err(e) = save_deleted_commands(dc_ref, &deleted_commands_path) {
                     eprintln!("{}", format!("Failed to save deleted commands: {}", e).red());
                 }
+                print_source_message();
             }
             Some(Operation::Remove { alias }) => {
                 use ops::alias_ops::remove_alias_from_multiple_files;
@@ -215,6 +231,7 @@ fn main() {
                 if let Err(e) = save_deleted_commands(dc_ref, &deleted_commands_path) {
                     eprintln!("{}", format!("Failed to save deleted commands: {}", e).red());
                 }
+                print_source_message();
             }
             Some(Operation::List) => {
                 use ops::alias_ops::get_aliases_from_multiple_files;
@@ -257,6 +274,7 @@ fn main() {
                 if let Err(e) = save_deleted_commands(dc_ref, &deleted_commands_path) {
                     eprintln!("{}", format!("Failed to save deleted commands: {}", e).red());
                 }
+                print_source_message();
             }
             Some(Operation::GetSuggestions { num }) => {
                 // Get total number of commands in the database
