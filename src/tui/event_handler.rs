@@ -44,7 +44,11 @@ impl App {
                         }
                         1 => { // Delete Suggestion
                             if let Some(cmd) = &self.selected_command_details {
-                                return Some(Operation::DeleteSuggestion { alias: cmd.command_text.clone() });
+                                let command_text = cmd.command_text.clone();
+                                self.show_command_details_popup = false;
+                                self.selected_command_details = None;
+                                self.command_details_selection = 0;
+                                return Some(Operation::DeleteSuggestion { alias: command_text });
                             }
                             self.show_command_details_popup = false;
                         }

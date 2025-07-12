@@ -78,7 +78,7 @@ source ~/.zshrc
 ### Fish
 Add this line to your `~/.config/fish/config.fish`:
 ```fish
-eval (alman init fish)
+alman init fish | source
 ```
 
 Then reload your configuration:

@@ -5,7 +5,7 @@ use crate::database::persistence::{
     load_deleted_commands, save_database, save_deleted_commands,
 };
 use crate::ops::{add_alias , remove_alias, delete_suggestion};
-use crate::tui::app::App;
+use crate::tui::app::{App, AppMode};
 use crate::tui::ui::render_ui;
 use ratatui::crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind},
@@ -232,6 +232,8 @@ fn handle_operation(
             if let Err(e) = save_deleted_commands(deleted_commands, deleted_commands_path) {
                 eprintln!("Failed to save deleted commands: {}", e);
             }
+            // Set mode back to main after deleting suggestion
+            app.set_mode(AppMode::Main);
         }
         Operation::GetSuggestions { .. } => {
             // Get suggestions is not available in TUI mode

@@ -110,7 +110,7 @@ main() {
             echo "  Then run: source ~/.zshrc"
             echo ""
             echo "For fish:"
-            echo "  Add 'eval (alman init fish)' to ~/.config/fish/config.fish"
+            echo "  Add 'alman init fish | source' to ~/.config/fish/config.fish"
             echo "  Then run: source ~/.config/fish/config.fish"
             ;;
     esac

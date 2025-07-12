@@ -38,18 +38,20 @@ pub fn initialize_database_from_history(db: &mut Database, deleted_commands: &De
 fn get_history_file_path() -> Result<String, Box<dyn std::error::Error>> {
     // Try to get HISTFILE from environment
     if let Ok(histfile) = env::var("HISTFILE") {
-        return Ok(histfile);
+        if !histfile.is_empty() {
+            return Ok(histfile);
+        }
     }
 
-    // Fallback to shell-specific default history files
+    // Fallback to shell-specific default history files in order of preference
     let home_dir = dirs::home_dir().ok_or("Could not determine home directory")?;
     
-    // Try common history file locations
+    // Try common history file locations in order of preference
     let possible_paths = vec![
-        home_dir.join(".bash_history"),
-        home_dir.join(".zsh_history"),
-        home_dir.join(".history"),
-        home_dir.join(".fish_history"),
+        home_dir.join(".zsh_history"),    // First priority
+        home_dir.join(".bash_history"),   // Second priority
+        home_dir.join(".history"),        // Third priority
+        home_dir.join(".fish_history"),   // Fourth priority
     ];
 
     for path in possible_paths {
