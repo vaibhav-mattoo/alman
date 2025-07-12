@@ -65,6 +65,45 @@ impl Database {
         }
     }
 
+    pub fn add_command_with_existing(&mut self, command: Command) {
+        if self.reverse_command_map.contains_key(&command.command_text) {
+            // Command already exists, update it
+            if let Some(existing_command) = self.reverse_command_map.get(&command.command_text) {
+                let mut updated_command = existing_command.clone();
+                self.total_score -= updated_command.score as i64;
+                self.total_num_commands -= 1;
+                
+                // Update frequency and recalculate score
+                updated_command.frequency += command.frequency;
+                updated_command.score = get_score(&updated_command);
+
+                self.command_list.remove(existing_command);
+                self.reverse_command_map.remove(&command.command_text);
+
+                self.command_list.insert(updated_command.clone());
+                self.reverse_command_map.insert(command.command_text.clone(), updated_command);
+
+                self.total_num_commands += 1;
+                self.total_score += self.reverse_command_map.get(&command.command_text).unwrap().score as i64;
+            }
+        } else {
+            // New command
+            if command.length <= 5 && command.number_of_words == 1 {
+                return; // Ignore commands that are too short and single-word
+            }
+            let score = command.score;
+            self.command_list.insert(command.clone());
+            self.reverse_command_map.insert(command.command_text.clone(), command);
+            self.total_num_commands += 1;
+            self.total_score += score as i64;
+        }
+        
+        let threshold: i64 = 10000; // Much higher threshold
+        if self.total_score > threshold {
+            self.score_reset();
+        }
+    }
+
     pub fn remove_command(&mut self, command_str: &String, deleted_commands: &mut DeletedCommands) {
         // first check if already exists in DeletedCommands
         if !deleted_commands.deleted_commands.contains(command_str) {

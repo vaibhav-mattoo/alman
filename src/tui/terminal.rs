@@ -39,6 +39,13 @@ pub fn run_tui(alias_file_path: PathBuf, alias_file_paths: Vec<String>) -> Resul
         }
     };
 
+    // If database was initialized from history, save it
+    if !database.command_list.is_empty() {
+        if let Err(e) = save_database(&database, &db_path) {
+            eprintln!("Failed to save initialized database: {}", e);
+        }
+    }
+
     let mut deleted_commands = match load_deleted_commands(&deleted_commands_path) {
         Ok(dc) => dc,
         Err(e) => {

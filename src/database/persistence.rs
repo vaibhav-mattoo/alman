@@ -42,16 +42,39 @@ pub fn save_database(db: &Database, file_path: &str) -> Result<(), Box<dyn std::
 pub fn load_database(file_path: &str) -> Result<Database, Box<dyn std::error::Error>> {
     if !Path::new(file_path).exists() {
         // Return empty database if file doesn't exist
-        return Ok(Database {
+        let mut db = Database {
             command_list: std::collections::BTreeSet::new(),
             reverse_command_map: std::collections::HashMap::new(),
             total_num_commands: 0,
             total_score: 0,
+        };
+        
+        // Try to initialize from history
+        let deleted_commands = load_deleted_commands(&get_deleted_commands_path()).unwrap_or_else(|_| DeletedCommands {
+            deleted_commands: std::collections::BTreeSet::new(),
         });
+        
+        if let Err(e) = super::history_loader::initialize_database_from_history(&mut db, &deleted_commands) {
+            eprintln!("Warning: Could not initialize from history: {}", e);
+        }
+        
+        return Ok(db);
     }
     
     let content = fs::read_to_string(file_path)?;
-    let db: Database = serde_json::from_str(&content)?;
+    let mut db: Database = serde_json::from_str(&content)?;
+    
+    // If database is empty, try to initialize from history
+    if db.command_list.is_empty() {
+        let deleted_commands = load_deleted_commands(&get_deleted_commands_path()).unwrap_or_else(|_| DeletedCommands {
+            deleted_commands: std::collections::BTreeSet::new(),
+        });
+        
+        if let Err(e) = super::history_loader::initialize_database_from_history(&mut db, &deleted_commands) {
+            eprintln!("Warning: Could not initialize from history: {}", e);
+        }
+    }
+    
     Ok(db)
 }
 
