@@ -2,6 +2,15 @@
 name = "alman"
 version = "0.1.0"
 edition = "2021"
+authors = ["Vaibhav Mattoo <vaibhav.mattoo@gmail.com>"]
+description = "A command-line tool and TUI for managing shell aliases with intelligent suggestions"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/vaibhav-mattoo/alman"
+homepage = "https://github.com/vaibhav-mattoo/alman"
+documentation = "https://docs.rs/alman"
+keywords = ["cli", "alias", "shell", "tui", "command-line"]
+categories = ["command-line-utilities", "development-tools"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
