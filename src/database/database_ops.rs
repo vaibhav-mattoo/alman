@@ -28,7 +28,7 @@ fn get_score(command: &Command) -> i32 {
     
     
 }
-
+//fix
 impl Database {
     pub fn add_command(&mut self, command_str: String, deleted_commands: &DeletedCommands) {
         if !deleted_commands.deleted_commands.contains(&command_str) {
