@@ -2,7 +2,7 @@
 
 A command-line tool and TUI for managing shell aliases with intelligent suggestions based on your command history. Alman helps you organize, create, and manage aliases across multiple files and shells, making your workflow faster and smarter.
 
-## Installation
+## 🚀 Installation
 
 ### Universal Install Script
 
@@ -42,7 +42,7 @@ cd alman
 cargo install --path .
 ```
 
-## Shell Configuration
+## ⚙️ Shell Configuration
 
 After installation, you need to configure your shell to use alman. The installer will detect your shell and provide specific instructions, but here are the general steps:
 
@@ -79,7 +79,7 @@ Then reload your configuration:
 source ~/.config/fish/config.fish
 ```
 
-## Table of Contents
+## 📋 Table of Contents
 
 - [Quick Start](#quick-start)
 - [Interactive Mode](#interactive-mode)
@@ -93,7 +93,7 @@ source ~/.config/fish/config.fish
 - [Uninstallation](#uninstallation)
 - [License](#license)
 
-## Quick Start
+## 🚀 Quick Start
 
 ### Interactive Mode
 Launch the interactive alias manager:
@@ -123,7 +123,7 @@ alman list
 alman get-suggestions -n 10
 ```
 
-## Interactive Mode
+## 🖥️ Interactive Mode
 
 The Terminal User Interface (TUI) provides an intuitive way to browse, add, remove, and change aliases:
 
@@ -140,7 +140,7 @@ The Terminal User Interface (TUI) provides an intuitive way to browse, add, remo
 - **Alias suggestions**: Get smart suggestions based on your command history
 - **Multi-file support**: Manage aliases across multiple files
 
-## Command Line Usage
+## 💻 Command Line Usage
 
 ### Basic Commands
 
@@ -158,7 +158,7 @@ alman list
 alman get-suggestions -n 5
 ```
 
-## Usage Examples
+## 📝 Usage Examples
 
 ### Basic Usage
 
@@ -189,7 +189,7 @@ alman delete-suggestion gs
 alman --alias-file-path ~/.my-aliases add -c "htop" h
 ```
 
-## Advanced Usage
+## 🔧 Advanced Usage
 
 ### Multi-file Management
 
@@ -211,7 +211,7 @@ alman get-suggestions -n 10
 alman delete-suggestion gs
 ```
 
-## TUI Navigation
+## 🎮 TUI Navigation
 
 The Terminal User Interface provides an intuitive way to manage aliases:
 
@@ -228,7 +228,7 @@ The Terminal User Interface provides an intuitive way to manage aliases:
 - **Smart suggestions**: Get intelligent alias suggestions
 - **Multi-file support**: Manage aliases across different files
 
-## Command Line Options
+## ⚙️ Command Line Options
 
 ### Output Options
 - `-c, --command <COMMAND>`: Command to associate with the alias (for `add` and `change`)
@@ -245,7 +245,7 @@ alman --alias-file-path ~/.bash_aliases add -c "ls -lh" lh
 alman get-suggestions -n 10
 ```
 
-## Output Format
+## 📊 Output Format
 
 Alman displays aliases in a clear, tabular format:
 
@@ -258,7 +258,7 @@ Alman displays aliases in a clear, tabular format:
 └─────────┴───────────────┘
 ```
 
-## Use Cases
+## 🎯 Use Cases
 
 Perfect for managing your shell aliases, discovering new shortcuts, and keeping your workflow efficient:
 
@@ -274,7 +274,7 @@ alman remove gp
 alman get-suggestions -n 5
 ```
 
-## Uninstallation
+## 🗑️ Uninstallation
 
 To uninstall `alman`, you can run the command:
 
@@ -295,6 +295,6 @@ chmod +x uninstall.sh
 - From `~/.zshrc`: Remove `eval "$(alman init zsh)"`
 - From `~/.config/fish/config.fish`: Remove `eval (alman init fish)`
 
-## License
+## 📄 License
 
 MIT License - see LICENSE file for details.
