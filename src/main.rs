@@ -257,7 +257,7 @@ fn main() {
             }
             Some(Operation::Change { old_alias, new_alias }) => {
                 use ops::alias_ops::remove_alias_from_multiple_files;
-                use ops::alias_ops::add_alias_to_multiple_files;
+                use ops::alias_ops::add_alias_to_multiple_files_force;
                 use ops::alias_ops::get_aliases_from_multiple_files;
                 
                 // Get all aliases to find the command for the old alias
@@ -267,13 +267,13 @@ fn main() {
                     .map(|(_, command)| command.clone());
                 
                 if let Some(command) = old_command {
-                    // First remove the old alias
+                    // First remove the old alias from all files
                     remove_alias_from_multiple_files(&alias_file_paths, &old_alias);
                     if let Some(first_path) = alias_file_paths.first() {
                         remove_alias(dc_ref, first_path, &old_alias);
                     }
-                    // Then add the new alias with the same command
-                    add_alias_to_multiple_files(&alias_file_paths, &new_alias, &command);
+                    // Then add the new alias with the same command (force add)
+                    add_alias_to_multiple_files_force(&alias_file_paths, &new_alias, &command);
                     if let Some(first_path) = alias_file_paths.first() {
                         add_alias(db_ref, dc_ref, first_path, &new_alias, &command);
                     }

@@ -110,6 +110,14 @@ pub fn add_alias_to_multiple_files(file_paths: &[String], alias: &str, command: 
     }
 }
 
+pub fn add_alias_to_multiple_files_force(file_paths: &[String], alias: &str, command: &str) {
+    // Force add alias even if it exists (for change operations)
+    // Add to the first file (primary alias file)
+    if let Some(primary_file) = file_paths.first() {
+        add_alias_to_file(primary_file, alias, command);
+    }
+}
+
 pub fn remove_alias_from_multiple_files(file_paths: &[String], alias: &str) {
     let mut found = false;
     
@@ -119,7 +127,7 @@ pub fn remove_alias_from_multiple_files(file_paths: &[String], alias: &str) {
             aliases.remove(pos);
             write_aliases(file_path, aliases);
             found = true;
-            break; // Remove from first file where found
+            // Continue to remove from all files where it exists
         }
     }
     
