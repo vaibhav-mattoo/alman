@@ -175,28 +175,40 @@ fn handle_operation(
             }
             app.config_changed = true;
         }
-        Operation::Change { old_alias, new_alias, command } => {
+        Operation::Change { old_alias, new_alias } => {
             use crate::ops::alias_ops::remove_alias_from_multiple_files;
             use crate::ops::alias_ops::add_alias_to_multiple_files;
-            // First remove the old alias
-            remove_alias_from_multiple_files(&app.alias_file_paths, old_alias.as_str());
-            if let Some(first_path) = app.alias_file_paths.first() {
-                remove_alias::remove_alias(deleted_commands, first_path, old_alias.as_str());
+            use crate::ops::alias_ops::get_aliases_from_multiple_files;
+            
+            // Get all aliases to find the command for the old alias
+            let aliases = get_aliases_from_multiple_files(&app.alias_file_paths);
+            let old_command = aliases.iter()
+                .find(|(alias, _)| alias == &old_alias)
+                .map(|(_, command)| command.clone());
+            
+            if let Some(command) = old_command {
+                // First remove the old alias
+                remove_alias_from_multiple_files(&app.alias_file_paths, old_alias.as_str());
+                if let Some(first_path) = app.alias_file_paths.first() {
+                    remove_alias::remove_alias(deleted_commands, first_path, old_alias.as_str());
+                }
+                // Then add the new alias with the same command
+                add_alias_to_multiple_files(&app.alias_file_paths, new_alias.as_str(), command.as_str());
+                if let Some(first_path) = app.alias_file_paths.first() {
+                    add_alias::add_alias(database, deleted_commands, first_path, new_alias.as_str(), command.as_str());
+                }
+                app.status_message = format!("Changed alias: {} -> {}", old_alias, new_alias);
+                // Save after changing alias
+                if let Err(e) = save_database(database, db_path) {
+                    eprintln!("Failed to save database: {}", e);
+                }
+                if let Err(e) = save_deleted_commands(deleted_commands, deleted_commands_path) {
+                    eprintln!("Failed to save deleted commands: {}", e);
+                }
+                app.config_changed = true;
+            } else {
+                app.status_message = format!("Alias '{}' not found.", old_alias);
             }
-            // Then add the new alias with the provided command
-            add_alias_to_multiple_files(&app.alias_file_paths, new_alias.as_str(), command.as_str());
-            if let Some(first_path) = app.alias_file_paths.first() {
-                add_alias::add_alias(database, deleted_commands, first_path, new_alias.as_str(), command.as_str());
-            }
-            app.status_message = format!("Changed alias: {} -> {}", old_alias, new_alias);
-            // Save after changing alias
-            if let Err(e) = save_database(database, db_path) {
-                eprintln!("Failed to save database: {}", e);
-            }
-            if let Err(e) = save_deleted_commands(deleted_commands, deleted_commands_path) {
-                eprintln!("Failed to save deleted commands: {}", e);
-            }
-            app.config_changed = true;
         }
         Operation::List => {
             // List operation is now handled in the TUI as a separate mode

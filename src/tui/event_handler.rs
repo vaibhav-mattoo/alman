@@ -414,8 +414,7 @@ impl App {
                             self.set_mode(AppMode::Main);
                             Some(Operation::Change { 
                                 old_alias: old_alias_str, 
-                                new_alias: new_alias_str,
-                                command: command_str
+                                new_alias: new_alias_str
                             })
                         } else {
                             // This is an add operation

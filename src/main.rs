@@ -255,26 +255,38 @@ fn main() {
                 println!("{}", format!("└{:─<alias$}┴{:─<cmd$}┘", "", "", alias = max_alias_length + 2, cmd = max_command_length + 2).cyan());
                 println!("{}", format!("Total: {} alias(es) across {} file(s)", aliases.len(), alias_file_paths.len()).green());
             }
-            Some(Operation::Change { old_alias, new_alias, command }) => {
+            Some(Operation::Change { old_alias, new_alias }) => {
                 use ops::alias_ops::remove_alias_from_multiple_files;
                 use ops::alias_ops::add_alias_to_multiple_files;
-                // First remove the old alias
-                remove_alias_from_multiple_files(&alias_file_paths, old_alias);
-                if let Some(first_path) = alias_file_paths.first() {
-                    remove_alias(dc_ref, first_path, old_alias);
+                use ops::alias_ops::get_aliases_from_multiple_files;
+                
+                // Get all aliases to find the command for the old alias
+                let aliases = get_aliases_from_multiple_files(&alias_file_paths);
+                let old_command = aliases.iter()
+                    .find(|(alias, _)| alias == old_alias)
+                    .map(|(_, command)| command.clone());
+                
+                if let Some(command) = old_command {
+                    // First remove the old alias
+                    remove_alias_from_multiple_files(&alias_file_paths, &old_alias);
+                    if let Some(first_path) = alias_file_paths.first() {
+                        remove_alias(dc_ref, first_path, &old_alias);
+                    }
+                    // Then add the new alias with the same command
+                    add_alias_to_multiple_files(&alias_file_paths, &new_alias, &command);
+                    if let Some(first_path) = alias_file_paths.first() {
+                        add_alias(db_ref, dc_ref, first_path, &new_alias, &command);
+                    }
+                    if let Err(e) = save_database(db_ref, &db_path) {
+                        eprintln!("{}", format!("Failed to save database: {}", e).red());
+                    }
+                    if let Err(e) = save_deleted_commands(dc_ref, &deleted_commands_path) {
+                        eprintln!("{}", format!("Failed to save deleted commands: {}", e).red());
+                    }
+                    print_source_message();
+                } else {
+                    eprintln!("{}", format!("Alias '{}' not found.", old_alias).red());
                 }
-                // Then add the new alias with the provided command
-                add_alias_to_multiple_files(&alias_file_paths, new_alias, command);
-                if let Some(first_path) = alias_file_paths.first() {
-                    add_alias(db_ref, dc_ref, first_path, new_alias, command);
-                }
-                if let Err(e) = save_database(db_ref, &db_path) {
-                    eprintln!("{}", format!("Failed to save database: {}", e).red());
-                }
-                if let Err(e) = save_deleted_commands(dc_ref, &deleted_commands_path) {
-                    eprintln!("{}", format!("Failed to save deleted commands: {}", e).red());
-                }
-                print_source_message();
             }
             Some(Operation::GetSuggestions { num }) => {
                 // Get total number of commands in the database
