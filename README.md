@@ -1,5 +1,8 @@
 # alman - Intelligent Alias Manager
 
+[![Last Commit](https://img.shields.io/github/last-commit/vaibhav-mattoo/cxt)](https://github.com/vaibhav-mattoo/cxt/commits)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A command-line tool and TUI for managing shell aliases with intelligent suggestions based on your command history. Alman helps you organize, create, and manage aliases across multiple files and shells, making your workflow faster and smarter.
 
 ## 🚀 Installation
@@ -14,7 +17,8 @@ curl -sSfL https://raw.githubusercontent.com/vaibhav-mattoo/alman/main/install.s
 
 This script will automatically detect your system and install the appropriate binary.
 
-Remember to add `~/.local/bin` to your `$PATH` if prompted by the install script, by adding `export PATH="$HOME/.local/bin:$PATH"` in the end of your shell config (~/.bashrc, ~/.zshrc etc).
+> [!IMPORTANT]
+> Remember to add `~/.local/bin` to your `$PATH` if prompted by the install script, by adding `export PATH="$HOME/.local/bin:$PATH"` in the end of your shell config (~/.bashrc, ~/.zshrc etc).
 
 ### From Cargo
 
@@ -45,6 +49,9 @@ cargo install --path .
 ## ⚙️ Shell Configuration
 
 After installation, you need to configure your shell to use alman. The installer will detect your shell and provide specific instructions, but here are the general steps:
+
+> [!NOTE]
+> The installer will automatically detect your shell and show you the exact configuration line to add to your shell config file.
 
 ### Bash
 Add this line to your `~/.bashrc`:
@@ -79,19 +86,49 @@ Then reload your configuration:
 source ~/.config/fish/config.fish
 ```
 
-## 📋 Table of Contents
+> [!TIP]
+> Alman automatically initializes with your shell history when first run, so you'll have intelligent suggestions right from the start!
 
+<!-- disabledMarkdownTOC autolink="false" markdown_preview="github" -->
+
+- [Description](#description)
+- [Installation](#installation)
+    - [Universal Install Script](#universal-install-script)
+    - [From Cargo](#from-cargo)
+    - [From AUR](#from-aur-arch-linux)
+    - [From Source](#from-source)
+- [Shell Configuration](#shell-configuration)
+    - [Bash](#bash)
+    - [Zsh](#zsh)
+    - [Fish](#fish)
 - [Quick Start](#quick-start)
+    - [Interactive Mode](#interactive-mode)
+    - [Command Line Mode](#command-line-mode)
 - [Interactive Mode](#interactive-mode)
+    - [Navigation](#navigation)
+    - [TUI Features](#tui-features)
 - [Command Line Usage](#command-line-usage)
+    - [Basic Commands](#basic-commands)
 - [Usage Examples](#usage-examples)
+    - [Basic Usage](#basic-usage)
+    - [Advanced Usage](#advanced-usage)
+    - [Change Command Examples](#change-command-examples)
 - [Advanced Usage](#advanced-usage)
+    - [Multi-file Management](#multi-file-management)
+    - [Suggestion Management](#suggestion-management)
+    - [Alias Management](#alias-management)
 - [TUI Navigation](#tui-navigation)
+    - [Key Bindings](#key-bindings)
+    - [Features](#features)
 - [Command Line Options](#command-line-options)
+    - [Output Options](#output-options)
+    - [Examples](#examples)
 - [Output Format](#output-format)
 - [Use Cases](#use-cases)
 - [Uninstallation](#uninstallation)
 - [License](#license)
+
+<!-- /MarkdownTOC -->
 
 ## 🚀 Quick Start
 
@@ -189,6 +226,9 @@ alman delete-suggestion gs
 alman --alias-file-path ~/.my-aliases add -c "htop" h
 ```
 
+> [!IMPORTANT]
+> After running `alman change old new` and sourcing your aliases, only the new alias will work. The old alias will be completely removed from all managed alias files.
+
 ## 🔧 Advanced Usage
 
 ### Multi-file Management
@@ -214,6 +254,9 @@ alman delete-suggestion gs
 ## 🎮 TUI Navigation
 
 The Terminal User Interface provides an intuitive way to manage aliases:
+
+> [!TIP]
+> The TUI mode is perfect for browsing your command history and discovering new alias opportunities!
 
 ### Key Bindings
 - **Arrow keys** or **jk**: Navigate through aliases
@@ -274,6 +317,9 @@ alman remove gp
 alman get-suggestions -n 5
 ```
 
+> [!TIP]
+> Try the interactive TUI mode (`alman tui`) for the most intuitive alias management experience!
+
 ## 🗑️ Uninstallation
 
 To uninstall `alman`, you can run the command:
@@ -290,10 +336,11 @@ chmod +x uninstall.sh
 ./uninstall.sh
 ```
 
-**Note**: After uninstalling, remember to remove the shell configuration lines from your shell config files:
-- From `~/.bashrc`: Remove `eval "$(alman init bash)"`
-- From `~/.zshrc`: Remove `eval "$(alman init zsh)"`
-- From `~/.config/fish/config.fish`: Remove `eval (alman init fish)`
+> [!NOTE]
+> After uninstalling, remember to remove the shell configuration lines from your shell config files:
+> - From `~/.bashrc`: Remove `eval "$(alman init bash)"`
+> - From `~/.zshrc`: Remove `eval "$(alman init zsh)"`
+> - From `~/.config/fish/config.fish`: Remove `eval (alman init fish)`
 
 ## 📄 License
 
