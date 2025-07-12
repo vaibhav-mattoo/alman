@@ -91,7 +91,7 @@ main() {
             echo "Detected shell: fish"
             echo ""
             echo "To enable alman, add this line to your ~/.config/fish/config.fish:"
-            echo "  eval (alman init fish)"
+            echo "  alman init fish | source"
             echo ""
             echo "Then run:"
             echo "  source ~/.config/fish/config.fish"
