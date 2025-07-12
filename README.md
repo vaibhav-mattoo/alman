@@ -2,6 +2,8 @@
 
 [![Last Commit](https://img.shields.io/github/last-commit/vaibhav-mattoo/cxt)](https://github.com/vaibhav-mattoo/cxt/commits)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Crates.io](https://img.shields.io/crates/v/alman)](https://crates.io/crates/alman)
+[![AUR version](https://img.shields.io/aur/version/alman?logo=arch-linux)](https://aur.archlinux.org/packages/alman)
 
 A command-line tool and TUI for managing shell aliases with intelligent suggestions based on your command history. Alman helps you organize, create, and manage aliases across multiple files and shells, making your workflow faster and smarter.
 
