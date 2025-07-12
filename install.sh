@@ -60,6 +60,63 @@ main() {
     if ! echo ":${PATH}:" | grep -Fq ":${BIN_DIR}:"; then
         echo "Note: ${BIN_DIR} is not on your \$PATH. alman will not work unless it is added to \$PATH."
     fi
+
+    # Detect shell and provide configuration instructions
+    echo ""
+    echo "=== Shell Configuration ==="
+    
+    local _shell
+    _shell="$(basename "${SHELL:-$(ps -p $$ -o comm=)}")"
+    
+    case "${_shell}" in
+        bash)
+            echo "Detected shell: bash"
+            echo ""
+            echo "To enable alman, add this line to your ~/.bashrc:"
+            echo "  eval \"\$(alman init bash)\""
+            echo ""
+            echo "Then run:"
+            echo "  source ~/.bashrc"
+            ;;
+        zsh)
+            echo "Detected shell: zsh"
+            echo ""
+            echo "To enable alman, add this line to your ~/.zshrc:"
+            echo "  eval \"\$(alman init zsh)\""
+            echo ""
+            echo "Then run:"
+            echo "  source ~/.zshrc"
+            ;;
+        fish)
+            echo "Detected shell: fish"
+            echo ""
+            echo "To enable alman, add this line to your ~/.config/fish/config.fish:"
+            echo "  eval (alman init fish)"
+            echo ""
+            echo "Then run:"
+            echo "  source ~/.config/fish/config.fish"
+            ;;
+        *)
+            echo "Detected shell: ${_shell}"
+            echo ""
+            echo "To enable alman, you need to add the appropriate initialization line to your shell config file."
+            echo ""
+            echo "For bash:"
+            echo "  Add 'eval \"\$(alman init bash)\"' to ~/.bashrc"
+            echo "  Then run: source ~/.bashrc"
+            echo ""
+            echo "For zsh:"
+            echo "  Add 'eval \"\$(alman init zsh)\"' to ~/.zshrc"
+            echo "  Then run: source ~/.zshrc"
+            echo ""
+            echo "For fish:"
+            echo "  Add 'eval (alman init fish)' to ~/.config/fish/config.fish"
+            echo "  Then run: source ~/.config/fish/config.fish"
+            ;;
+    esac
+    
+    echo ""
+    echo "After configuration, alman will track your commands and provide intelligent alias suggestions!"
 }
 
 parse_args() {
