@@ -73,6 +73,15 @@ if [ -d "$MAN_DIR" ] && [ ! "$(ls -A "$MAN_DIR")" ]; then
     echo "Removed empty $MAN_DIR"
 fi
 
+# Remove old .alman directory (legacy location)
+OLD_ALMAN_DIR="$HOME/.alman"
+if [ -d "$OLD_ALMAN_DIR" ]; then
+    rm -rf "$OLD_ALMAN_DIR"
+    echo "Removed legacy directory $OLD_ALMAN_DIR"
+else
+    echo "Legacy directory not found at $OLD_ALMAN_DIR"
+fi
+
 echo ""
 echo "alman has been uninstalled."
 echo ""
