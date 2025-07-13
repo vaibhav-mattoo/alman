@@ -14,7 +14,7 @@ Watch alman in action! See how it can transform your command-line workflow with 
 ## 🚀 Installation
 
 > [!IMPORTANT]
-> **Shell Configuration Required**: After installation, you **must** add the shell configuration line to your shell config file (check with `which $SHELL`) or the app will not work. See the [Shell Configuration](#-shell-configuration) section below for detailed instructions.
+> **Shell Configuration Required**: After installation, you **must** add the shell configuration line to your shell config file (check with `which $SHELL`) or the app will not work. See the [Shell Configuration](#%EF%B8%8F-shell-configuration) section below for detailed instructions.
 
 ### Universal Install Script
 
@@ -108,7 +108,7 @@ source ~/.config/fish/config.fish
     - [From Cargo](#from-cargo)
     - [From AUR (Arch Linux)](#from-aur-arch-linux)
     - [From Source](#from-source)
-- [Shell Configuration](#-shell-configuration)
+- [Shell Configuration](#%EF%B8%8F-shell-configuration)
     - [Bash](#bash)
     - [Zsh](#zsh)
     - [Fish](#fish)
