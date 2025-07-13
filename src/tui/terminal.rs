@@ -26,6 +26,12 @@ pub fn run_tui(alias_file_path: PathBuf, alias_file_paths: Vec<String>) -> Resul
         eprintln!("Failed to create data directory: {}", e);
         return Err(e);
     }
+    
+    // Ensure config directory exists
+    if let Err(e) = crate::database::persistence::ensure_config_directory() {
+        eprintln!("Failed to create config directory: {}", e);
+        return Err(e);
+    }
 
     // Load database and deleted commands from persistent storage
     let db_path = get_database_path();

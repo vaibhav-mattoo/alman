@@ -4,6 +4,7 @@ use std::path::PathBuf;
 pub struct ShellOpts {
     pub app_path: String,
     pub data_dir: String,
+    pub config_dir: String,
     pub alias_file_path: String,
 }
 
@@ -15,7 +16,23 @@ impl ShellOpts {
             .to_string();
         
         let data_dir = crate::database::persistence::get_data_directory()
-            .unwrap_or_else(|_| PathBuf::from(".").join(".alman"))
+            .unwrap_or_else(|_| {
+                dirs::home_dir()
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join(".local")
+                    .join("share")
+                    .join("alman")
+            })
+            .to_string_lossy()
+            .to_string();
+        
+        let config_dir = crate::database::persistence::get_config_directory()
+            .unwrap_or_else(|_| {
+                dirs::home_dir()
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join(".config")
+                    .join("alman")
+            })
             .to_string_lossy()
             .to_string();
         
@@ -26,6 +43,7 @@ impl ShellOpts {
         Self {
             app_path,
             data_dir,
+            config_dir,
             alias_file_path,
         }
     }
@@ -45,6 +63,7 @@ fn render_bash(opts: &ShellOpts) -> String {
     script.push_str("# Alman shell integration for bash\n");
     script.push_str("# Add this to your ~/.bashrc\n\n");
     script.push_str(&format!("export ALMAN_DATA_DIR=\"{}\"\n", opts.data_dir));
+    script.push_str(&format!("export ALMAN_CONFIG_DIR=\"{}\"\n", opts.config_dir));
     script.push_str(&format!("export ALMAN_BIN=\"{}\"\n\n", opts.app_path));
     
     script.push_str("alman_preexec() {\n");
@@ -56,9 +75,9 @@ fn render_bash(opts: &ShellOpts) -> String {
     
     script.push_str("alman_source_aliases() {\n");
     script.push_str("    # Source all alias files from alman config\n");
-    script.push_str(&format!("    if [ -f \"{}/config.json\" ]; then\n", opts.data_dir));
+    script.push_str(&format!("    if [ -f \"{}/config.json\" ]; then\n", opts.config_dir));
     script.push_str("        # Extract alias file paths from config and source them\n");
-    script.push_str("        local alias_files=$(cat \"$ALMAN_DATA_DIR/config.json\" | grep -o '\"[^\"]*aliases[^\"]*\"' | tr -d '\"')\n");
+    script.push_str("        local alias_files=$(cat \"$ALMAN_CONFIG_DIR/config.json\" | grep -o '\"[^\"]*aliases[^\"]*\"' | tr -d '\"')\n");
     script.push_str("        for file in $alias_files; do\n");
     script.push_str("            if [ -f \"$file\" ]; then\n");
     script.push_str("                source \"$file\"\n");
@@ -94,6 +113,7 @@ fn render_zsh(opts: &ShellOpts) -> String {
     script.push_str("# Alman shell integration for zsh\n");
     script.push_str("# Add this to your ~/.zshrc\n\n");
     script.push_str(&format!("export ALMAN_DATA_DIR=\"{}\"\n", opts.data_dir));
+    script.push_str(&format!("export ALMAN_CONFIG_DIR=\"{}\"\n", opts.config_dir));
     script.push_str(&format!("export ALMAN_BIN=\"{}\"\n\n", opts.app_path));
     
     script.push_str("alman_preexec() {\n");
@@ -104,9 +124,9 @@ fn render_zsh(opts: &ShellOpts) -> String {
     
     script.push_str("alman_source_aliases() {\n");
     script.push_str("    # Source all alias files from alman config\n");
-    script.push_str(&format!("    if [ -f \"{}/config.json\" ]; then\n", opts.data_dir));
+    script.push_str(&format!("    if [ -f \"{}/config.json\" ]; then\n", opts.config_dir));
     script.push_str("        # Extract alias file paths from config and source them\n");
-    script.push_str("        local alias_files=$(cat \"$ALMAN_DATA_DIR/config.json\" | grep -o '\"[^\"]*aliases[^\"]*\"' | tr -d '\"')\n");
+    script.push_str("        local alias_files=$(cat \"$ALMAN_CONFIG_DIR/config.json\" | grep -o '\"[^\"]*aliases[^\"]*\"' | tr -d '\"')\n");
     script.push_str("        for file in $alias_files; do\n");
     script.push_str("            if [ -f \"$file\" ]; then\n");
     script.push_str("                source \"$file\"\n");
@@ -134,6 +154,7 @@ fn render_fish(opts: &ShellOpts) -> String {
     script.push_str("# Alman shell integration for fish\n");
     script.push_str("# Add this to your ~/.config/fish/config.fish\n\n");
     script.push_str(&format!("set -gx ALMAN_DATA_DIR \"{}\"\n", opts.data_dir));
+    script.push_str(&format!("set -gx ALMAN_CONFIG_DIR \"{}\"\n", opts.config_dir));
     script.push_str(&format!("set -gx ALMAN_BIN \"{}\"\n\n", opts.app_path));
     
     script.push_str("function alman_preexec --on-event fish_preexec\n");
@@ -144,9 +165,9 @@ fn render_fish(opts: &ShellOpts) -> String {
     
     script.push_str("function alman_source_aliases\n");
     script.push_str("    # Source all alias files from alman config\n");
-    script.push_str(&format!("    if test -f \"{}/config.json\"\n", opts.data_dir));
+    script.push_str(&format!("    if test -f \"{}/config.json\"\n", opts.config_dir));
     script.push_str("        # Extract alias file paths from config and source them\n");
-    script.push_str("        for file in (cat \"$ALMAN_DATA_DIR/config.json\" | grep -o '\"[^\"]*aliases[^\"]*\"' | tr -d '\"')\n");
+    script.push_str("        for file in (cat \"$ALMAN_CONFIG_DIR/config.json\" | grep -o '\"[^\"]*aliases[^\"]*\"' | tr -d '\"')\n");
     script.push_str("            if test -f \"$file\"\n");
     script.push_str("                source \"$file\"\n");
     script.push_str("            end\n");
@@ -170,6 +191,7 @@ fn render_posix(opts: &ShellOpts) -> String {
     script.push_str("# Alman shell integration for POSIX shells (ksh, dash, etc.)\n");
     script.push_str("# Add this to your ~/.profile or ~/.kshrc\n\n");
     script.push_str(&format!("export ALMAN_DATA_DIR=\"{}\"\n", opts.data_dir));
+    script.push_str(&format!("export ALMAN_CONFIG_DIR=\"{}\"\n", opts.config_dir));
     script.push_str(&format!("export ALMAN_BIN=\"{}\"\n\n", opts.app_path));
     
     script.push_str("alman_preexec() {\n");
@@ -180,9 +202,9 @@ fn render_posix(opts: &ShellOpts) -> String {
     
     script.push_str("alman_source_aliases() {\n");
     script.push_str("    # Source all alias files from alman config\n");
-    script.push_str(&format!("    if [ -f \"{}/config.json\" ]; then\n", opts.data_dir));
+    script.push_str(&format!("    if [ -f \"{}/config.json\" ]; then\n", opts.config_dir));
     script.push_str("        # Extract alias file paths from config and source them\n");
-    script.push_str("        local alias_files=$(cat \"$ALMAN_DATA_DIR/config.json\" | grep -o '\"[^\"]*aliases[^\"]*\"' | tr -d '\"')\n");
+    script.push_str("        local alias_files=$(cat \"$ALMAN_CONFIG_DIR/config.json\" | grep -o '\"[^\"]*aliases[^\"]*\"' | tr -d '\"')\n");
     script.push_str("        for file in $alias_files; do\n");
     script.push_str("            if [ -f \"$file\" ]; then\n");
     script.push_str("                . \"$file\"\n");

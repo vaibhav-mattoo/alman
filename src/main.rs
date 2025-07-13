@@ -373,9 +373,15 @@ fn main() {
                 println!("{}", init_script);
             }
             Some(Operation::InitData) => {
-                // Initialize the .alman directory and files
+                // Initialize the data directory (for database and deleted commands)
                 if let Err(e) = ensure_data_directory() {
                     eprintln!("Failed to create data directory: {}", e);
+                    return;
+                }
+                
+                // Initialize the config directory (for config and aliases)
+                if let Err(e) = crate::database::persistence::ensure_config_directory() {
+                    eprintln!("Failed to create config directory: {}", e);
                     return;
                 }
                 
@@ -417,6 +423,13 @@ fn main() {
                 // Create default alias file if it doesn't exist
                 let default_alias_path = crate::database::persistence::get_default_alias_file_path();
                 if !std::path::Path::new(&default_alias_path).exists() {
+                    // Ensure the parent directory exists
+                    if let Some(parent) = std::path::Path::new(&default_alias_path).parent() {
+                        if let Err(e) = std::fs::create_dir_all(parent) {
+                            eprintln!("Failed to create alias file directory: {}", e);
+                            return;
+                        }
+                    }
                     if let Err(e) = std::fs::write(&default_alias_path, "# Alman aliases file\n") {
                         eprintln!("Failed to create alias file: {}", e);
                     }
