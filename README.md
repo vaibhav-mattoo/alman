@@ -1,6 +1,6 @@
 # alman - Intelligent Alias Manager
 
-[![Last Commit](https://img.shields.io/github/last-commit/vaibhav-mattoo/cxt)](https://github.com/vaibhav-mattoo/cxt/commits)
+[![Last Commit](https://img.shields.io/github/last-commit/vaibhav-mattoo/alman)](https://github.com/vaibhav-mattoo/alman/commits)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Crates.io](https://img.shields.io/crates/v/alman)](https://crates.io/crates/alman)
 [![AUR version](https://img.shields.io/aur/version/alman?logo=arch-linux)](https://aur.archlinux.org/packages/alman)
