@@ -368,10 +368,10 @@ Creates abbreviations from command words:
 - `npm install` → `ni`
 
 ### First Letter Combination
-Combines first letters of each word:
-- `git status` → `gs`
-- `docker compose` → `dc`
-- `systemctl status` → `ss`
+Combines first letter of first word and rest:
+- `git status` → `gstatus`
+- `docker compose` → `dcompose`
+- `systemctl status` → `sstatus`
 
 ### Smart Truncation
 Truncates long commands intelligently:
