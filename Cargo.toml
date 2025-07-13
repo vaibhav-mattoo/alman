@@ -1,6 +1,6 @@
 [package]
 name = "alman"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Vaibhav Mattoo <vaibhav.mattoo@gmail.com>"]
 description = "A command-line tool and TUI for managing shell aliases with intelligent suggestions"
