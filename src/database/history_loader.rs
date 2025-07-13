@@ -15,23 +15,32 @@ pub fn initialize_database_from_history(db: &mut Database, deleted_commands: &De
         return Ok(());
     }
 
-    let history_content = fs::read_to_string(&history_file)?;
-    let commands = parse_history_file(&history_content);
-    
-    if commands.is_empty() {
-        return Ok(());
-    }
+    // Safety check: ensure we're not accidentally writing to the history file
+    if history_file.contains("history") || history_file.contains("HIST") {
+        // Double-check that we're only reading, not writing
+        let metadata = fs::metadata(&history_file)?;
+        if metadata.is_file() {
+            // Read the file content safely
+            let history_content = fs::read_to_string(&history_file)?;
+            let commands = parse_history_file(&history_content);
+            
+            if commands.is_empty() {
+                return Ok(());
+            }
 
-    // Calculate time intervals (2 minutes apart, going backwards from now)
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-    let interval_seconds = 120; // 2 minutes
-    
-    for (i, command) in commands.iter().enumerate() {
-        let timestamp = now - (i as u64 * interval_seconds);
-        insert_command_with_timestamp(command, timestamp, db, deleted_commands);
-    }
+            // Calculate time intervals (2 minutes apart, going backwards from now)
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+            let interval_seconds = 120; // 2 minutes
+            
+            for (i, command) in commands.iter().enumerate() {
+                let timestamp = now - (i as u64 * interval_seconds);
+                insert_command_with_timestamp(command, timestamp, db, deleted_commands);
+            }
 
-    println!("Initialized database with {} commands from history", commands.len());
+            println!("Initialized database with {} commands from history", commands.len());
+        }
+    }
+    
     Ok(())
 }
 
@@ -76,7 +85,6 @@ fn parse_history_file(content: &str) -> Vec<String> {
 
         // Skip lines that are likely not commands
         if trimmed.starts_with('#') || 
-           trimmed.starts_with(':') ||
            trimmed.starts_with("HISTTIMEFORMAT") ||
            trimmed.starts_with("HISTSIZE") ||
            trimmed.starts_with("HISTFILESIZE") {
@@ -99,8 +107,14 @@ fn extract_command_from_history_line(line: &str) -> String {
     // Zsh history format: ": 1234567890:0;command"
     if line.starts_with(": ") {
         if let Some(semicolon_pos) = line.find(';') {
-            return line[semicolon_pos + 1..].trim().to_string();
+            let command_part = line[semicolon_pos + 1..].trim();
+            // Only return if it's not empty and doesn't look like more metadata
+            if !command_part.is_empty() && !command_part.starts_with(':') {
+                return command_part.to_string();
+            }
         }
+        // If we can't parse it properly, return empty
+        return String::new();
     }
     
     // Fish history format: "- cmd:command"
