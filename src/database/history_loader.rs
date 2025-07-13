@@ -74,7 +74,10 @@ fn get_history_file_path() -> Result<String, Box<dyn std::error::Error>> {
         home_dir.join(".zsh_history"),    // First priority
         home_dir.join(".bash_history"),   // Second priority
         home_dir.join(".history"),        // Third priority
-        home_dir.join(".fish_history"),   // Fourth priority
+        // Fish history in correct location
+        home_dir.join(".local/share/fish/fish_history"),   // Fourth priority
+        // Fallback to old fish location (for compatibility)
+        home_dir.join(".fish_history"),   // Fifth priority
     ];
 
     for path in possible_paths {
@@ -91,13 +94,7 @@ fn parse_history_file(content: &str) -> Vec<String> {
     let lines: Vec<&str> = content.lines().collect();
     
     // Process lines from last to first (most recent first)
-    for (line_num, line) in lines.iter().rev().enumerate() {
-        // Skip lines that can't be processed due to encoding issues
-        if !line.is_ascii() && !line.chars().all(|c| c.is_ascii() || c.is_whitespace()) {
-            eprintln!("Warning: Skipping line {} due to invalid characters", line_num + 1);
-            continue;
-        }
-        
+    for line in lines.iter().rev() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -128,12 +125,9 @@ fn extract_command_from_history_line(line: &str) -> String {
     if line.starts_with(": ") {
         if let Some(semicolon_pos) = line.find(';') {
             let command_part = line[semicolon_pos + 1..].trim();
-            // Only return if it's not empty and doesn't look like more metadata
-            if !command_part.is_empty() && !command_part.starts_with(':') {
-                // Additional safety check: ensure the command part is valid
-                if command_part.chars().all(|c| c.is_ascii() || c.is_whitespace()) {
-                    return command_part.to_string();
-                }
+            // Return the command part if it's not empty
+            if !command_part.is_empty() {
+                return command_part.to_string();
             }
         }
         // If we can't parse it properly, return empty
@@ -143,7 +137,7 @@ fn extract_command_from_history_line(line: &str) -> String {
     // Fish history format: "- cmd:command"
     if line.starts_with("- cmd:") {
         let command_part = line[6..].trim();
-        if command_part.chars().all(|c| c.is_ascii() || c.is_whitespace()) {
+        if !command_part.is_empty() {
             return command_part.to_string();
         }
         return String::new();
@@ -156,13 +150,9 @@ fn extract_command_from_history_line(line: &str) -> String {
         return String::new();
     }
     
-    // Default: assume it's just the command
-    // Additional safety check for the default case
-    if line.chars().all(|c| c.is_ascii() || c.is_whitespace()) {
-        line.to_string()
-    } else {
-        String::new()
-    }
+    // Default: assume it's just the command (plain history format)
+    // For plain commands, just return the line as-is
+    line.to_string()
 }
 
 fn insert_command_with_timestamp(command: &str, timestamp: u64, db: &mut Database, deleted_commands: &DeletedCommands) {
