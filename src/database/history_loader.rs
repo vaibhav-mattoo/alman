@@ -20,8 +20,22 @@ pub fn initialize_database_from_history(db: &mut Database, deleted_commands: &De
         // Double-check that we're only reading, not writing
         let metadata = fs::metadata(&history_file)?;
         if metadata.is_file() {
-            // Read the file content safely
-            let history_content = fs::read_to_string(&history_file)?;
+            // Read the file content safely, handling encoding errors
+            let history_content = match fs::read_to_string(&history_file) {
+                Ok(content) => content,
+                Err(e) => {
+                    eprintln!("Warning: Could not read history file '{}': {}", history_file, e);
+                    eprintln!("Attempting to read with lossy conversion...");
+                    match fs::read(&history_file) {
+                        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                        Err(e2) => {
+                            eprintln!("Error: Could not read history file at all: {}", e2);
+                            return Ok(());
+                        }
+                    }
+                }
+            };
+            
             let commands = parse_history_file(&history_content);
             
             if commands.is_empty() {
@@ -77,7 +91,13 @@ fn parse_history_file(content: &str) -> Vec<String> {
     let lines: Vec<&str> = content.lines().collect();
     
     // Process lines from last to first (most recent first)
-    for line in lines.iter().rev() {
+    for (line_num, line) in lines.iter().rev().enumerate() {
+        // Skip lines that can't be processed due to encoding issues
+        if !line.is_ascii() && !line.chars().all(|c| c.is_ascii() || c.is_whitespace()) {
+            eprintln!("Warning: Skipping line {} due to invalid characters", line_num + 1);
+            continue;
+        }
+        
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -110,7 +130,10 @@ fn extract_command_from_history_line(line: &str) -> String {
             let command_part = line[semicolon_pos + 1..].trim();
             // Only return if it's not empty and doesn't look like more metadata
             if !command_part.is_empty() && !command_part.starts_with(':') {
-                return command_part.to_string();
+                // Additional safety check: ensure the command part is valid
+                if command_part.chars().all(|c| c.is_ascii() || c.is_whitespace()) {
+                    return command_part.to_string();
+                }
             }
         }
         // If we can't parse it properly, return empty
@@ -119,7 +142,11 @@ fn extract_command_from_history_line(line: &str) -> String {
     
     // Fish history format: "- cmd:command"
     if line.starts_with("- cmd:") {
-        return line[6..].trim().to_string();
+        let command_part = line[6..].trim();
+        if command_part.chars().all(|c| c.is_ascii() || c.is_whitespace()) {
+            return command_part.to_string();
+        }
+        return String::new();
     }
     
     // Bash history format: just the command
@@ -130,7 +157,12 @@ fn extract_command_from_history_line(line: &str) -> String {
     }
     
     // Default: assume it's just the command
-    line.to_string()
+    // Additional safety check for the default case
+    if line.chars().all(|c| c.is_ascii() || c.is_whitespace()) {
+        line.to_string()
+    } else {
+        String::new()
+    }
 }
 
 fn insert_command_with_timestamp(command: &str, timestamp: u64, db: &mut Database, deleted_commands: &DeletedCommands) {
