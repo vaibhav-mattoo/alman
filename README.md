@@ -7,7 +7,14 @@
 
 A command-line tool and TUI for managing shell aliases with intelligent suggestions based on your command history. Alman helps you organize, create, and manage aliases across multiple files and shells, making your workflow faster and smarter.
 
+## 🎨 Showcase
+
+Watch alman in action! See how it can transform your command-line workflow with intelligent alias suggestions and intuitive management.
+
 ## 🚀 Installation
+
+> [!IMPORTANT]
+> **Shell Configuration Required**: After installation, you **must** add the shell configuration line to your shell config file (check with `which $SHELL`) or the app will not work. See the [Shell Configuration](#-shell-configuration) section below for detailed instructions.
 
 ### Universal Install Script
 
@@ -19,7 +26,7 @@ curl -sSfL https://raw.githubusercontent.com/vaibhav-mattoo/alman/main/install.s
 
 This script will automatically detect your system and install the appropriate binary.
 
-> [!IMPORTANT]
+> [!NOTE]
 > Remember to add `~/.local/bin` to your `$PATH` if prompted by the install script, by adding `export PATH="$HOME/.local/bin:$PATH"` in the end of your shell config (~/.bashrc, ~/.zshrc etc).
 
 ### From Cargo
@@ -95,6 +102,7 @@ source ~/.config/fish/config.fish
 
 <!-- disabledMarkdownTOC autolink="false" markdown_preview="github" -->
 
+- [Showcase](#-showcase)
 - [Installation](#-installation)
     - [Universal Install Script](#universal-install-script)
     - [From Cargo](#from-cargo)
@@ -127,6 +135,16 @@ source ~/.config/fish/config.fish
     - [Output Options](#output-options)
     - [Examples](#examples)
 - [Output Format](#-output-format)
+- [Ranking Algorithm](#-ranking-algorithm)
+    - [Scoring Formula](#scoring-formula)
+    - [Time-Based Multipliers](#time-based-multipliers)
+    - [Factors Explained](#factors-explained)
+- [Alias Suggestion Schemes](#-alias-suggestion-schemes)
+    - [Vowel Removal](#vowel-removal)
+    - [Abbreviation](#abbreviation)
+    - [First Letter Combination](#first-letter-combination)
+    - [Smart Truncation](#smart-truncation)
+    - [Prefix Matching](#prefix-matching)
 - [Use Cases](#-use-cases)
 - [Uninstallation](#-uninstallation)
 - [License](#-license)
@@ -303,6 +321,65 @@ Alman displays aliases in a clear, tabular format:
 │ ll      │ ls -la        │
 └─────────┴───────────────┘
 ```
+
+## 🧠 Ranking Algorithm
+
+Alman uses a sophisticated scoring algorithm to rank commands based on three key factors:
+
+### Scoring Formula
+```
+Score = Time Multiplier × Length^(3/5) × Frequency
+```
+
+### Time-Based Multipliers
+- **≤ 1 hour**: 4.0× (recent commands get highest priority)
+- **≤ 1 day**: 2.0× (recent commands)
+- **≤ 1 week**: 0.5× (older commands)
+- **> 1 week**: 0.25× (very old commands)
+
+### Factors Explained
+- **Recency**: Recently used commands score higher, encouraging current workflow patterns
+- **Frequency**: More frequently used commands get higher scores
+- **Length**: Longer commands get slightly higher scores (using length^(3/5) to avoid excessive bias)
+- **Automatic Reset**: When total score exceeds 70,000, all frequencies are reduced by 50% to prevent score inflation
+
+> [!TIP]
+> The algorithm automatically adapts to your usage patterns, prioritizing commands you use most frequently and recently!
+
+## 🎯 Alias Suggestion Schemes
+
+Alman employs multiple intelligent schemes to generate meaningful alias suggestions:
+
+### Vowel Removal
+Removes vowels to create shorter, memorable aliases:
+- `git status` → `gst` (removes 'i', 'a', 'u')
+- `docker ps` → `dckr ps` (removes 'o', 'e')
+
+### Abbreviation
+Creates abbreviations from command words:
+- `git pull` → `gp`
+- `ls -la` → `ll`
+- `npm install` → `ni`
+
+### First Letter Combination
+Combines first letters of each word:
+- `git status` → `gs`
+- `docker compose` → `dc`
+- `systemctl status` → `ss`
+
+### Smart Truncation
+Truncates long commands intelligently:
+- `git checkout` → `gco`
+- `docker build` → `db`
+- `npm run dev` → `nrd`
+
+### Prefix Matching
+Suggests aliases based on common command prefixes:
+- `git` commands → `g` + first letter of subcommand
+- `docker` commands → `d` + first letter of subcommand
+
+> [!NOTE]
+> Alman evaluates all these schemes and ranks suggestions by their effectiveness and memorability, ensuring you get the most useful aliases first.
 
 ## 🎯 Use Cases
 

@@ -57,7 +57,7 @@ impl Database {
                 self.total_num_commands += 1;
                 self.total_score += self.reverse_command_map.get(&command_str).unwrap().score as i64;
             }
-            let threshold: i64 = 10000; // Much higher threshold
+            let threshold: i64 = 70000; // Much higher threshold
             if self.total_score > threshold {
                 self.score_reset();
             }
@@ -98,7 +98,7 @@ impl Database {
             self.total_score += score as i64;
         }
         
-        let threshold: i64 = 10000; // Much higher threshold
+        let threshold: i64 = 70000; // Much higher threshold
         if self.total_score > threshold {
             self.score_reset();
         }
@@ -136,7 +136,7 @@ impl Database {
             self.command_list.insert(command.clone());
         }
     }
-    let threshold: i64 = 10000; // Much higher threshold
+    let threshold: i64 = 70000; // Much higher threshold
     if self.total_score > threshold {
         self.score_reset();
     }
