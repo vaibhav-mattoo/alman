@@ -11,6 +11,12 @@ A command-line tool and TUI for managing shell aliases with intelligent suggesti
 
 Watch alman in action! See how it can transform your command-line workflow with intelligent alias suggestions and intuitive management.
 
+
+
+https://github.com/user-attachments/assets/53ae73cf-15ff-4f9e-af31-51ac2b4f3c5e
+
+
+
 ## 🚀 Installation
 
 > [!IMPORTANT]
