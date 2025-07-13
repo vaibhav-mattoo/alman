@@ -71,11 +71,11 @@ fn get_history_file_path() -> Result<String, Box<dyn std::error::Error>> {
     
     // Try common history file locations in order of preference
     let possible_paths = vec![
-        home_dir.join(".zsh_history"),    // First priority
-        home_dir.join(".bash_history"),   // Second priority
-        home_dir.join(".history"),        // Third priority
-        // Fish history in correct location
-        home_dir.join(".local/share/fish/fish_history"),   // Fourth priority
+        // Fish history in correct location (highest priority)
+        home_dir.join(".local/share/fish/fish_history"),   // First priority
+        home_dir.join(".zsh_history"),    // Second priority
+        home_dir.join(".bash_history"),   // Third priority
+        home_dir.join(".history"),        // Fourth priority
         // Fallback to old fish location (for compatibility)
         home_dir.join(".fish_history"),   // Fifth priority
     ];
