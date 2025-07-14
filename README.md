@@ -4,6 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Crates.io](https://img.shields.io/crates/v/alman)](https://crates.io/crates/alman)
 [![AUR version](https://img.shields.io/aur/version/alman?logo=arch-linux)](https://aur.archlinux.org/packages/alman)
+[![Homebrew Tap](https://img.shields.io/badge/homebrew-tap-brightgreen?logo=homebrew)](https://github.com/vaibhav-mattoo/homebrew-alman)
 
 A command-line tool and TUI for managing shell aliases with intelligent suggestions based on your command history. Alman helps you organize, create, and manage aliases across multiple files and shells, making your workflow faster and smarter.
 
@@ -39,6 +40,13 @@ This script will automatically detect your system and install the appropriate bi
 
 ```bash
 cargo install alman
+```
+
+### From Homebrew (macOS & Linux)
+
+```bash
+brew tap vaibhav-mattoo/alman
+brew install alman
 ```
 
 ### From AUR (Arch Linux)
@@ -112,6 +120,7 @@ source ~/.config/fish/config.fish
 - [Installation](#-installation)
     - [Universal Install Script](#universal-install-script)
     - [From Cargo](#from-cargo)
+    - [From Homebrew (macOS & Linux)](#from-homebrew-macos-linux)
     - [From AUR (Arch Linux)](#from-aur-arch-linux)
     - [From Source](#from-source)
 - [Shell Configuration](#%EF%B8%8F-shell-configuration)
