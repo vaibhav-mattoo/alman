@@ -1,6 +1,6 @@
 [package]
 name = "alman"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 authors = ["Vaibhav Mattoo <vaibhav.mattoo@gmail.com>"]
 description = "A command-line tool and TUI for managing shell aliases with intelligent suggestions"
@@ -23,3 +23,4 @@ crossterm = "0.29"
 colored = "2.0"
 dirs = "5.0"
 chrono = { version = "0.4", features = ["serde"] }
+bincode = "1.3.1"
