@@ -1,0 +1,43 @@
+# shellcheck shell=bash
+# Alman shell integration for bash — source this from ~/.bashrc:
+#   eval "$(alman init bash)"
+
+export ALMAN_DATA_DIR="{{ data_dir }}"
+export ALMAN_CONFIG_DIR="{{ config_dir }}"
+export ALMAN_BIN="{{ app_path }}"
+
+function __alman_source_aliases() {
+    local __alman_file
+    while IFS= read -r __alman_file; do
+        [[ -f "$__alman_file" ]] && \builtin source "$__alman_file"
+    done < <("{{ app_path }}" list-alias-files 2>/dev/null)
+}
+
+# Called by the DEBUG trap — fires before each command is executed.
+# Guards:
+#  - BASH_SUBSHELL != 0 → inside a subshell / pipeline segment → skip
+#  - COMP_LINE set      → inside readline completion → skip
+#  - HISTCMD unchanged  → same user command (loop body, function call) → skip
+#  - cmd == last cmd    → consecutive duplicate → skip
+function __alman_preexec() {
+    [[ "$BASH_SUBSHELL" -ne 0 ]] && return
+    [[ -n "${COMP_LINE:-}" ]] && return
+    [[ "${HISTCMD:-0}" -eq "${__alman_last_histcmd:-0}" ]] && return
+    __alman_last_histcmd="${HISTCMD:-0}"
+    local cmd="$1"
+    [[ -z "$cmd" ]] && return
+    [[ "$cmd" == "${__alman_last_cmd:-}" ]] && return
+    __alman_last_cmd="$cmd"
+    "{{ app_path }}" custom "$cmd" >/dev/null 2>&1 &
+    \builtin disown
+}
+
+"{{ app_path }}" init-data >/dev/null 2>&1
+
+if [[ -n "${PS1:-}" ]] && [[ "${ALMAN_HOOK_ACTIVE:-0}" -ne 1 ]]; then
+    ALMAN_HOOK_ACTIVE=1
+    __alman_last_histcmd="${HISTCMD:-0}"
+    \builtin trap '__alman_preexec "$BASH_COMMAND"' DEBUG
+fi
+
+__alman_source_aliases

@@ -1,0 +1,24 @@
+# Alman shell integration for fish — source this from ~/.config/fish/config.fish:
+#   alman init fish | source
+
+set -gx ALMAN_DATA_DIR "{{ data_dir }}"
+set -gx ALMAN_CONFIG_DIR "{{ config_dir }}"
+set -gx ALMAN_BIN "{{ app_path }}"
+
+function __alman_source_aliases
+    for __alman_file in ("{{ app_path }}" list-alias-files 2>/dev/null)
+        test -f "$__alman_file" && source "$__alman_file"
+    end
+end
+
+function __alman_preexec --on-event fish_preexec
+    set -l cmd "$argv[1]"
+    test -z "$cmd" && return
+    test "$cmd" = "$__alman_last_cmd" && return
+    set -g __alman_last_cmd "$cmd"
+    "{{ app_path }}" custom "$cmd" >/dev/null 2>&1 &
+end
+
+"{{ app_path }}" init-data >/dev/null 2>&1
+
+__alman_source_aliases

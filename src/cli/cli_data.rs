@@ -83,6 +83,8 @@ pub enum Operation {
     },
     #[command(hide = true)]
     InitData,
+    #[command(hide = true)]
+    ListAliasFiles,
 }
 
 #[derive(ValueEnum, Clone, Debug)]

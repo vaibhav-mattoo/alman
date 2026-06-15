@@ -117,6 +117,19 @@ fn main() {
         return;
     }
 
+    // Fast path: list-alias-files only needs config, not the DB.
+    if command_strings.len() > 1 && command_strings[1] == "list-alias-files" {
+        let paths = if let Some(cfg) = load_config() {
+            cfg.alias_file_paths
+        } else {
+            vec![crate::database::persistence::get_default_alias_file_path()]
+        };
+        for path in paths {
+            println!("{}", path);
+        }
+        return;
+    }
+
     let cli = if command_strings.len() > 1 && command_strings[1] != "custom" {
         Some(parse_args())
     } else {
@@ -434,6 +447,9 @@ fn main() {
                         eprintln!("Failed to create alias file: {}", e);
                     }
                 }
+            }
+            Some(Operation::ListAliasFiles) => {
+                // Handled in the fast-path above; unreachable here.
             }
             None => {}
         }
