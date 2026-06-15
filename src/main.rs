@@ -11,11 +11,10 @@ use database::persistence::{
     ensure_config_directory, ensure_data_directory, get_default_alias_file_path,
     load_config, save_config, AppConfig,
 };
-use ops::add_alias::add_alias;
+use ops::apply::{apply_add, apply_change, apply_remove, ApplyOutcome};
 use ops::delete_suggestion::delete_suggestion;
 use ops::get_suggestions;
 use ops::insert_command::insert_command;
-use ops::remove_alias::remove_alias;
 use shell::{render_shell_init, ShellOpts};
 use std::env;
 use std::fs;
@@ -205,22 +204,18 @@ fn main() {
 
     match cli.operation.as_ref().unwrap() {
         Operation::Add { alias, command } => {
-            use ops::alias_ops::add_alias_to_multiple_files;
             let Some(conn) = open_conn() else { return; };
-            add_alias_to_multiple_files(&alias_file_paths, alias, command);
-            if let Some(first_path) = alias_file_paths.first() {
-                add_alias(&conn, first_path, alias, command);
-            }
+            apply_add(&conn, &alias_file_paths, alias, command);
             print_source_message();
         }
         Operation::Remove { alias } => {
-            use ops::alias_ops::remove_alias_from_multiple_files;
             let Some(conn) = open_conn() else { return; };
-            remove_alias_from_multiple_files(&alias_file_paths, alias);
-            if let Some(first_path) = alias_file_paths.first() {
-                remove_alias(&conn, first_path, alias);
+            match apply_remove(&conn, &alias_file_paths, alias) {
+                ApplyOutcome::NotFound { alias } => {
+                    eprintln!("{}", format!("Alias '{}' not found.", alias).red());
+                }
+                _ => print_source_message(),
             }
-            print_source_message();
         }
         Operation::List => {
             use ops::alias_ops::get_aliases_from_multiple_files;
@@ -244,28 +239,12 @@ fn main() {
             println!("{}", format!("Total: {} alias(es) across {} file(s)", aliases.len(), alias_file_paths.len()).green());
         }
         Operation::Change { old_alias, new_alias } => {
-            use ops::alias_ops::{
-                add_alias_to_multiple_files_force, get_aliases_from_multiple_files,
-                remove_alias_from_multiple_files,
-            };
             let Some(conn) = open_conn() else { return; };
-            let aliases = get_aliases_from_multiple_files(&alias_file_paths);
-            let old_command = aliases.iter()
-                .find(|(a, _)| a == old_alias)
-                .map(|(_, c)| c.clone());
-
-            if let Some(command) = old_command {
-                remove_alias_from_multiple_files(&alias_file_paths, old_alias);
-                if let Some(first_path) = alias_file_paths.first() {
-                    remove_alias(&conn, first_path, old_alias);
+            match apply_change(&conn, &alias_file_paths, old_alias, new_alias) {
+                ApplyOutcome::NotFound { alias } => {
+                    eprintln!("{}", format!("Alias '{}' not found.", alias).red());
                 }
-                add_alias_to_multiple_files_force(&alias_file_paths, new_alias, &command);
-                if let Some(first_path) = alias_file_paths.first() {
-                    add_alias(&conn, first_path, new_alias, &command);
-                }
-                print_source_message();
-            } else {
-                eprintln!("{}", format!("Alias '{}' not found.", old_alias).red());
+                _ => print_source_message(),
             }
         }
         Operation::GetSuggestions { num } => {

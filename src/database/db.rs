@@ -68,19 +68,7 @@ pub fn open(path: &str) -> Result<Connection> {
             let last_access: i64 = ctx.get::<i64>(1)?;
             let length: f64 = ctx.get::<i64>(2)? as f64;
             let now: i64 = ctx.get::<i64>(3)?;
-
-            let diff = now - last_access;
-            let mult = if diff <= 3600 {
-                4.0_f64
-            } else if diff <= 86400 {
-                2.0
-            } else if diff <= 604800 {
-                0.5
-            } else {
-                0.25
-            };
-
-            Ok(mult * length.powf(0.6) * frequency)
+            Ok(crate::database::scoring::score(frequency, last_access, length, now))
         },
     )?;
 

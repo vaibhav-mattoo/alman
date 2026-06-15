@@ -1,6 +1,7 @@
 use crate::cli::cli_data::Operation;
 use crate::database::persistence::ensure_data_directory;
-use crate::ops::{add_alias, delete_suggestion, remove_alias};
+use crate::ops::apply::{apply_add, apply_change, apply_remove, ApplyOutcome};
+use crate::ops::delete_suggestion;
 use crate::tui::app::{App, AppMode};
 use crate::tui::ui::render_ui;
 use ratatui::crossterm::{
@@ -100,48 +101,33 @@ fn run_app<B: Backend>(
 fn handle_operation(operation: Operation, app: &mut App, conn: &Connection) {
     match operation {
         Operation::Add { alias, command } => {
-            use crate::ops::alias_ops::add_alias_to_multiple_files;
-            add_alias_to_multiple_files(&app.alias_file_paths, &alias, &command);
-            if let Some(first_path) = app.alias_file_paths.first() {
-                add_alias::add_alias(conn, first_path, &alias, &command);
-            }
+            apply_add(conn, &app.alias_file_paths, &alias, &command);
             app.status_message = format!("Added alias: {} = {}", alias, command);
             app.load_commands(conn);
             app.config_changed = true;
         }
         Operation::Remove { alias } => {
-            use crate::ops::alias_ops::remove_alias_from_multiple_files;
-            remove_alias_from_multiple_files(&app.alias_file_paths, &alias);
-            if let Some(first_path) = app.alias_file_paths.first() {
-                remove_alias::remove_alias(conn, first_path, &alias);
+            match apply_remove(conn, &app.alias_file_paths, &alias) {
+                ApplyOutcome::NotFound { .. } => {
+                    app.status_message = format!("Alias '{}' not found.", alias);
+                }
+                _ => {
+                    app.status_message = format!("Removed alias: {}", alias);
+                    app.load_commands(conn);
+                    app.config_changed = true;
+                }
             }
-            app.status_message = format!("Removed alias: {}", alias);
-            app.config_changed = true;
         }
         Operation::Change { old_alias, new_alias } => {
-            use crate::ops::alias_ops::{
-                add_alias_to_multiple_files_force, get_aliases_from_multiple_files,
-                remove_alias_from_multiple_files,
-            };
-            let aliases = get_aliases_from_multiple_files(&app.alias_file_paths);
-            let old_command = aliases
-                .iter()
-                .find(|(a, _)| a == &old_alias)
-                .map(|(_, c)| c.clone());
-
-            if let Some(command) = old_command {
-                remove_alias_from_multiple_files(&app.alias_file_paths, &old_alias);
-                if let Some(first_path) = app.alias_file_paths.first() {
-                    remove_alias::remove_alias(conn, first_path, &old_alias);
+            match apply_change(conn, &app.alias_file_paths, &old_alias, &new_alias) {
+                ApplyOutcome::NotFound { .. } => {
+                    app.status_message = format!("Alias '{}' not found.", old_alias);
                 }
-                add_alias_to_multiple_files_force(&app.alias_file_paths, &new_alias, &command);
-                if let Some(first_path) = app.alias_file_paths.first() {
-                    add_alias::add_alias(conn, first_path, &new_alias, &command);
+                _ => {
+                    app.status_message = format!("Changed alias: {} -> {}", old_alias, new_alias);
+                    app.load_commands(conn);
+                    app.config_changed = true;
                 }
-                app.status_message = format!("Changed alias: {} -> {}", old_alias, new_alias);
-                app.config_changed = true;
-            } else {
-                app.status_message = format!("Alias '{}' not found.", old_alias);
             }
         }
         Operation::List => {
