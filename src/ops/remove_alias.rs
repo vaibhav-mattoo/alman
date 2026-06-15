@@ -1,19 +1,15 @@
-use crate::database::database_structs::{DeletedCommands};
-use crate::ops::alias_ops::{remove_alias_from_file, get_aliases};
+use crate::ops::alias_ops::{get_aliases, remove_alias_from_file};
+use rusqlite::Connection;
 
-pub fn remove_alias(deleted_commands: &mut DeletedCommands, file_path: &str, alias: &str) {
-    // we are removing an alias, so we need to remove from deleted commands, 
-    // so that future commands can be added
-    // for this we simply remove the command from deleted commands
+/// Remove the alias from the alias file, then un-dismiss its command so it can
+/// be suggested again.
+pub fn remove_alias(conn: &Connection, file_path: &str, alias: &str) {
     let list = get_aliases(file_path);
-    // find command for the alias
     if let Some((_, command)) = list.iter().find(|(a, _)| a == alias) {
-        // remove the command from deleted commands
-        deleted_commands.deleted_commands.remove(command);
+        let _ = conn.execute(
+            "DELETE FROM dismissed WHERE command_text = ?1",
+            rusqlite::params![command],
+        );
     }
-
-    // then remove from the file.
     remove_alias_from_file(file_path, alias);
-
 }
-

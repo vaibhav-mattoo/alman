@@ -25,3 +25,5 @@ dirs = "5.0"
 chrono = { version = "0.4", features = ["serde"] }
 bincode = "1.3.1"
 askama = { version = "0.16", default-features = false, features = ["derive", "std"] }
+# bundled links SQLite statically; swap to `features = []` for a system libsqlite3 build
+rusqlite = { version = "0.40", features = ["bundled", "functions"] }

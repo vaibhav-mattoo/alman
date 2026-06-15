@@ -1,6 +1,9 @@
-use crate::database::database_structs::{Command, Database};
+use crate::database::database_structs::Command;
+use crate::database::db::now_secs;
 use crate::ops::alias_suggestions::AliasSuggestion;
+use crate::ops::get_suggestions::query_top_commands;
 use ratatui::widgets::ListState;
+use rusqlite::Connection;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
@@ -25,7 +28,7 @@ pub struct App {
     pub commands: Vec<Command>,
     pub filtered_commands: Vec<Command>,
     pub alias_file_path: PathBuf,
-    pub alias_file_paths: Vec<String>, // All tracked alias file paths
+    pub alias_file_paths: Vec<String>,
     pub should_quit: bool,
     pub status_message: String,
     pub show_popup: bool,
@@ -37,21 +40,21 @@ pub struct App {
     pub alias_suggestions_state: ListState,
     pub confirmation_alias: Option<String>,
     pub confirmation_command: Option<String>,
-    pub confirmation_selection: bool, // true for OK, false for Undo
-    pub remove_confirmation_alias: Option<String>, // alias being removed
-    pub remove_confirmation_command: Option<String>, // command of alias being removed
-    pub remove_confirmation_selection: bool, // true for OK, false for Undo
-    pub change_old_alias: Option<String>, // alias being changed
-    pub change_old_command: Option<String>, // command of alias being changed
-    pub change_new_alias: String, // new alias name being entered
+    pub confirmation_selection: bool,
+    pub remove_confirmation_alias: Option<String>,
+    pub remove_confirmation_command: Option<String>,
+    pub remove_confirmation_selection: bool,
+    pub change_old_alias: Option<String>,
+    pub change_old_command: Option<String>,
+    pub change_new_alias: String,
     pub change_new_alias_cursor_position: usize,
     pub change_alias_suggestions: Vec<AliasSuggestion>,
     pub change_alias_suggestions_state: ListState,
-    pub aliases: Vec<(String, String)>, // (alias, command) pairs
-    pub filtered_aliases: Vec<(String, String)>, // filtered aliases for remove
-    pub list_aliases_state: ListState, // for list aliases navigation
-    pub selected_command_details: Option<Command>, // for command details popup
-    pub command_details_selection: usize, // 0=Add Alias, 1=Delete Suggestion, 2=Back
+    pub aliases: Vec<(String, String)>,
+    pub filtered_aliases: Vec<(String, String)>,
+    pub list_aliases_state: ListState,
+    pub selected_command_details: Option<Command>,
+    pub command_details_selection: usize,
     pub show_command_details_popup: bool,
     pub config_changed: bool,
 }
@@ -106,14 +109,10 @@ impl App {
         }
     }
 
-    pub fn load_commands(&mut self, database: &mut Database) {
-        self.commands = database
-            .get_top_commands(Some(20))
-            .iter()
-            .map(|cmd| (*cmd).clone())
-            .collect();
+    pub fn load_commands(&mut self, conn: &Connection) {
+        let now = now_secs();
+        self.commands = query_top_commands(conn, now, 20);
         self.filtered_commands = self.commands.clone();
-        // Reset list selection when commands are reloaded
         self.list_state.select(None);
     }
 
@@ -121,14 +120,11 @@ impl App {
         if self.input.is_empty() {
             self.filtered_commands = self.commands.clone();
         } else {
+            let filter = self.input.to_lowercase();
             self.filtered_commands = self
                 .commands
                 .iter()
-                .filter(|cmd| {
-                    cmd.command_text
-                        .to_lowercase()
-                        .contains(&self.input.to_lowercase())
-                })
+                .filter(|cmd| cmd.command_text.to_lowercase().contains(&filter))
                 .cloned()
                 .collect();
         }
@@ -190,7 +186,6 @@ impl App {
                 self.mode = mode;
             }
             AppMode::AddAliasConfirmation => {
-                // Don't clear confirmation fields
                 self.mode = mode;
             }
             AppMode::RemoveAliasStep1 => {
@@ -198,20 +193,14 @@ impl App {
                 self.mode = mode;
             }
             AppMode::RemoveAliasConfirmation => {
-                // Don't clear remove confirmation fields
                 self.mode = mode;
             }
-            AppMode::ChangeAliasStep1 => {
-                self.mode = mode;
-            }
-            AppMode::ChangeAliasStep2 => {
+            AppMode::ChangeAliasStep1 | AppMode::ChangeAliasStep2 => {
                 self.mode = mode;
             }
             AppMode::Main => {
-                // Force clear when returning to main menu
                 self.mode = mode;
                 self.clear_input();
-                // Reset list state to ensure clean display
                 self.list_state.select(None);
             }
             _ => {
@@ -233,7 +222,6 @@ impl App {
         use crate::ops::alias_ops::get_aliases_from_multiple_files;
         self.aliases = get_aliases_from_multiple_files(&self.alias_file_paths);
         self.filtered_aliases = self.aliases.clone();
-        // Reset list selection when aliases are reloaded
         self.list_state.select(None);
     }
 
@@ -264,7 +252,6 @@ impl App {
 
     pub fn generate_change_alias_suggestions(&mut self) {
         if let Some(old_alias) = &self.change_old_alias {
-            // Find the command that this alias points to
             if let Some((_, command)) = self.aliases.iter().find(|(alias, _)| alias == old_alias) {
                 use crate::ops::alias_suggestions::AliasSuggester;
                 let suggester = AliasSuggester::new(&self.alias_file_path.to_string_lossy());
@@ -281,9 +268,8 @@ impl App {
 
     pub fn format_last_access_time(&self, timestamp: i64) -> String {
         use chrono::{DateTime, TimeZone, Utc};
-        let dt: DateTime<Utc> = Utc.timestamp_opt(timestamp, 0).single().unwrap_or_else(|| Utc::now());
+        let dt: DateTime<Utc> =
+            Utc.timestamp_opt(timestamp, 0).single().unwrap_or_else(Utc::now);
         dt.format("%m/%d/%Y %H:%M:%S").to_string()
     }
-
-
 }

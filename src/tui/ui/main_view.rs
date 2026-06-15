@@ -19,7 +19,7 @@ pub fn render(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         .map(|cmd| {
             ListItem::new(Line::from(vec![
                 Span::styled(
-                    format!("Score: {} | ", cmd.score),
+                    format!("Score: {:.0} | ", cmd.score),
                     Style::default().fg(Color::Green),
                 ),
                 Span::styled(

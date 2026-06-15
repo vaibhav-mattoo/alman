@@ -6,35 +6,36 @@ mod shell;
 
 use cli::arg_handler::parse_args;
 use cli::cli_data::Operation;
-use database::database_structs::{Database, DeletedCommands};
+use database::db::{get_db_path, open};
 use database::persistence::{
-    ensure_data_directory, get_database_path, get_deleted_commands_path, load_database,
-    load_deleted_commands, save_database, save_deleted_commands, load_config, save_config, AppConfig
+    ensure_config_directory, ensure_data_directory, get_default_alias_file_path,
+    load_config, save_config, AppConfig,
 };
 use ops::add_alias::add_alias;
 use ops::delete_suggestion::delete_suggestion;
 use ops::get_suggestions;
 use ops::insert_command::insert_command;
 use ops::remove_alias::remove_alias;
-use shell::{ShellOpts, render_shell_init};
+use shell::{render_shell_init, ShellOpts};
 use std::env;
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use tui::run_tui;
 use colored::*;
 use clap::CommandFactory;
-use std::path::PathBuf;
-use std::fs;
-use std::path::Path;
-use std::os::unix::fs::PermissionsExt;
 
 fn to_absolute_path(path: &str) -> String {
     let pb = PathBuf::from(path);
     match pb.canonicalize() {
         Ok(abs) => abs.to_string_lossy().to_string(),
         Err(_) => {
-            // If the file doesn't exist yet, canonicalize the parent
             if let Some(parent) = pb.parent() {
                 if let Ok(abs_parent) = parent.canonicalize() {
-                    return abs_parent.join(pb.file_name().unwrap_or_default()).to_string_lossy().to_string();
+                    return abs_parent
+                        .join(pb.file_name().unwrap_or_default())
+                        .to_string_lossy()
+                        .to_string();
                 }
             }
             pb.to_string_lossy().to_string()
@@ -47,9 +48,13 @@ fn is_system_command(cmd: &str) -> bool {
         return false;
     }
     if let Ok(paths) = env::var("PATH") {
-        for path in paths.split(":") {
+        for path in paths.split(':') {
             let full_path = Path::new(path).join(cmd);
-            if full_path.exists() && fs::metadata(&full_path).map(|m| m.is_file() && (m.permissions().mode() & 0o111 != 0)).unwrap_or(false) {
+            if full_path.exists()
+                && fs::metadata(&full_path)
+                    .map(|m| m.is_file() && (m.permissions().mode() & 0o111 != 0))
+                    .unwrap_or(false)
+            {
                 return true;
             }
         }
@@ -68,390 +73,297 @@ fn print_source_message() {
     } else {
         "your shell's config file"
     };
-    // ANSI green: \x1b[32m ... \x1b[0m
     println!("\nTo use your new aliases immediately, run: \x1b[32msource {}\x1b[0m", shell_file);
 }
 
 fn main() {
-    // Intercept --help/-h to show dynamic default alias file path
     let args: Vec<String> = std::env::args().collect();
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        // Load config and get default alias file path
-        let default_path = {
-            if let Some(cfg) = crate::database::persistence::load_config() {
-                cfg.alias_file_paths.first().map(|p| to_absolute_path(p)).unwrap_or_else(|| crate::database::persistence::get_default_alias_file_path())
-            } else {
-                crate::database::persistence::get_default_alias_file_path()
-            }
-        };
+
+    // Show help before touching the DB.
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        let default_path = load_config()
+            .and_then(|c| c.alias_file_paths.first().map(|p| to_absolute_path(p)))
+            .unwrap_or_else(get_default_alias_file_path);
         println!("Current default alias file path: {}\n", default_path.green());
-        <crate::cli::cli_data::Cli as CommandFactory>::command().print_help().unwrap();
+        <crate::cli::cli_data::Cli as CommandFactory>::command()
+            .print_help()
+            .unwrap();
         println!();
         std::process::exit(0);
     }
 
-    // Ensure data directory exists
-    if let Err(e) = ensure_data_directory() {
-        eprintln!("Failed to create data directory: {}", e);
-        return;
-    }
-
-    // Load config for alias file paths
-    let config = load_config();
-    let mut alias_file_paths = if let Some(cfg) = &config {
-        cfg.alias_file_paths.clone()
-    } else {
-        vec![crate::database::persistence::get_default_alias_file_path()]
-    };
-
-    // Parse CLI args
-    let command_strings: Vec<String> = env::args().collect();
-
-    // If no arguments (just the binary name), launch TUI by default
-    if command_strings.len() == 1 {
-        // Use the first alias file path for TUI
-        let file_path = alias_file_paths.first().unwrap_or(&crate::database::persistence::get_default_alias_file_path()).clone();
-        if let Err(e) = run_tui(std::path::PathBuf::from(file_path), alias_file_paths) {
-            eprintln!("{}", format!("TUI error: {}", e).red());
-        }
-        return;
-    }
-
     // Fast path: list-alias-files only needs config, not the DB.
-    if command_strings.len() > 1 && command_strings[1] == "list-alias-files" {
-        let paths = if let Some(cfg) = load_config() {
-            cfg.alias_file_paths
-        } else {
-            vec![crate::database::persistence::get_default_alias_file_path()]
-        };
+    if args.len() > 1 && args[1] == "list-alias-files" {
+        let paths = load_config()
+            .map(|c| c.alias_file_paths)
+            .unwrap_or_else(|| vec![get_default_alias_file_path()]);
         for path in paths {
             println!("{}", path);
         }
         return;
     }
 
-    let cli = if command_strings.len() > 1 && command_strings[1] != "custom" {
-        Some(parse_args())
-    } else {
-        None
-    };
-
-    // If only --alias-file-path is provided (no subcommand), update config and exit
-    if let Some(cli) = &cli {
-        if cli.operation.is_none() && cli.alias_file_path.is_some() {
-            let cli_path_str = to_absolute_path(&cli.alias_file_path.as_ref().unwrap().to_string_lossy());
-            if !alias_file_paths.contains(&cli_path_str) {
-                alias_file_paths.push(cli_path_str.clone());
-            }
-            // Move the new path to the front (make it default)
-            if let Some(pos) = alias_file_paths.iter().position(|p| p == &cli_path_str) {
-                let new_default = alias_file_paths.remove(pos);
-                alias_file_paths.insert(0, new_default);
-            }
-            let new_config = AppConfig { alias_file_paths: alias_file_paths.clone() };
-            let _ = save_config(&new_config);
-            println!("Default alias file path set to {}", cli_path_str.green());
-            return;
-        }
+    if let Err(e) = ensure_data_directory() {
+        eprintln!("Failed to create data directory: {}", e);
+        return;
     }
 
-    // If CLI provided alias_file_path, add it to the list and update config
-    if let Some(ref cli) = cli {
+    let config = load_config();
+    let mut alias_file_paths = config
+        .as_ref()
+        .map(|c| c.alias_file_paths.clone())
+        .unwrap_or_else(|| vec![get_default_alias_file_path()]);
+
+    // Fast path: `custom` opens the DB but skips full CLI parse.
+    if args.len() > 1 && args[1] == "custom" {
+        if args.len() < 3 {
+            eprintln!("Usage: {} custom <command> [--cwd <dir>] [--session <id>]", args[0]);
+            return;
+        }
+
+        let mut session_id: Option<String> = None;
+        let mut cwd: Option<String> = None;
+        let mut cmd_parts: Vec<&str> = Vec::new();
+        let mut i = 2;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--session" if i + 1 < args.len() => {
+                    session_id = Some(args[i + 1].clone());
+                    i += 2;
+                }
+                "--cwd" if i + 1 < args.len() => {
+                    cwd = Some(args[i + 1].clone());
+                    i += 2;
+                }
+                _ => {
+                    cmd_parts.push(&args[i]);
+                    i += 1;
+                }
+            }
+        }
+        let command = cmd_parts.join(" ");
+
+        let db_path = get_db_path();
+        let conn = match open(&db_path) {
+            Ok(c) => c,
+            Err(e) => { eprintln!("alman: DB error: {e}"); return; }
+        };
+        insert_command(command, &conn, session_id.as_deref(), cwd.as_deref());
+        return;
+    }
+
+    // Parse CLI for all other subcommands.
+    let cli = parse_args();
+
+    // Bare --alias-file-path with no subcommand: update config and exit.
+    if cli.operation.is_none() {
         if let Some(ref cli_path) = cli.alias_file_path {
             let cli_path_str = to_absolute_path(&cli_path.to_string_lossy());
             if !alias_file_paths.contains(&cli_path_str) {
                 alias_file_paths.push(cli_path_str.clone());
-                let new_config = AppConfig { alias_file_paths: alias_file_paths.clone() };
-                let _ = save_config(&new_config);
             }
+            if let Some(pos) = alias_file_paths.iter().position(|p| p == &cli_path_str) {
+                let new_default = alias_file_paths.remove(pos);
+                alias_file_paths.insert(0, new_default);
+            }
+            let _ = save_config(&AppConfig { alias_file_paths });
+            println!("Default alias file path set to {}", cli_path_str.green());
+        } else {
+            // No subcommand and no path flag → launch TUI.
+            let file_path = alias_file_paths
+                .first()
+                .cloned()
+                .unwrap_or_else(get_default_alias_file_path);
+            let db_path = get_db_path();
+            let conn = match open(&db_path) {
+                Ok(c) => c,
+                Err(e) => { eprintln!("alman: DB error: {e}"); return; }
+            };
+            if let Err(e) = run_tui(PathBuf::from(file_path), alias_file_paths, conn) {
+                eprintln!("{}", format!("TUI error: {}", e).red());
+            }
+        }
+        return;
+    }
+
+    // Add CLI-provided alias path to config if new.
+    if let Some(ref cli_path) = cli.alias_file_path {
+        let cli_path_str = to_absolute_path(&cli_path.to_string_lossy());
+        if !alias_file_paths.contains(&cli_path_str) {
+            alias_file_paths.push(cli_path_str);
+            let _ = save_config(&AppConfig { alias_file_paths: alias_file_paths.clone() });
         }
     }
 
-    // Load database and deleted commands from persistent storage
-    let db_path = get_database_path();
-    let deleted_commands_path = get_deleted_commands_path();
-
-    let mut db = match load_database(&db_path) {
-        Ok(db) => db,
-        Err(e) => {
-            eprintln!("{}", format!("Failed to load database: {}", e).red());
-            Database {
-                command_list: std::collections::BTreeSet::new(),
-                reverse_command_map: std::collections::HashMap::new(),
-                total_num_commands: 0,
-                total_score: 0,
-            }
+    // Open DB for subcommands that need it (all except Init, InitData, ListAliasFiles).
+    let open_conn = || -> Option<rusqlite::Connection> {
+        match open(&get_db_path()) {
+            Ok(c) => Some(c),
+            Err(e) => { eprintln!("alman: DB error: {e}"); None }
         }
     };
 
-    let mut deleted_commands = match load_deleted_commands(&deleted_commands_path) {
-        Ok(dc) => dc,
-        Err(e) => {
-            eprintln!("{}", format!("Failed to load deleted commands: {}", e).red());
-            DeletedCommands {
-                deleted_commands: std::collections::BTreeSet::new(),
+    match cli.operation.as_ref().unwrap() {
+        Operation::Add { alias, command } => {
+            use ops::alias_ops::add_alias_to_multiple_files;
+            let Some(conn) = open_conn() else { return; };
+            add_alias_to_multiple_files(&alias_file_paths, alias, command);
+            if let Some(first_path) = alias_file_paths.first() {
+                add_alias(&conn, first_path, alias, command);
             }
+            print_source_message();
         }
-    };
-
-    let db_ref: &mut Database = &mut db;
-    let dc_ref: &mut DeletedCommands = &mut deleted_commands;
-
-    // Check if this is a custom command (starts with "custom")
-    if command_strings[1] == "custom" {
-        // This is a direct command to insert
-        if command_strings.len() < 3 {
-            eprintln!("Usage: {} custom <command>", command_strings[0]);
-            eprintln!("Example: {} custom 'ls -la'", command_strings[0]);
-            return;
+        Operation::Remove { alias } => {
+            use ops::alias_ops::remove_alias_from_multiple_files;
+            let Some(conn) = open_conn() else { return; };
+            remove_alias_from_multiple_files(&alias_file_paths, alias);
+            if let Some(first_path) = alias_file_paths.first() {
+                remove_alias(&conn, first_path, alias);
+            }
+            print_source_message();
         }
-        
-        let command = command_strings[2..].join(" ");
-        insert_command(command.to_string(), db_ref, dc_ref);
-
-        // Save database after inserting command
-        if let Err(e) = save_database(db_ref, &db_path) {
-            eprintln!("Failed to save database: {}", e);
+        Operation::List => {
+            use ops::alias_ops::get_aliases_from_multiple_files;
+            let aliases = get_aliases_from_multiple_files(&alias_file_paths);
+            if aliases.is_empty() {
+                println!("{}", "No aliases found.".yellow());
+                return;
+            }
+            let max_alias_length = aliases.iter().map(|(a, _)| a.len()).max().unwrap_or(5).max(5);
+            let max_command_length = aliases.iter().map(|(_, c)| c.len()).max().unwrap_or(7).max(7);
+            println!("{}", format!("┌{:─<alias$}┬{:─<cmd$}┐", "", "", alias = max_alias_length + 2, cmd = max_command_length + 2).cyan());
+            println!("{}", format!("│ {:<alias$} │ {:<cmd$} │", "ALIAS", "COMMAND", alias = max_alias_length, cmd = max_command_length).cyan());
+            println!("{}", format!("├{:─<alias$}┼{:─<cmd$}┤", "", "", alias = max_alias_length + 2, cmd = max_command_length + 2).cyan());
+            for (alias, command) in &aliases {
+                println!("│ {} │ {} │",
+                    format!("{:<width$}", alias, width = max_alias_length).cyan(),
+                    format!("{:<width$}", command, width = max_command_length),
+                );
+            }
+            println!("{}", format!("└{:─<alias$}┴{:─<cmd$}┘", "", "", alias = max_alias_length + 2, cmd = max_command_length + 2).cyan());
+            println!("{}", format!("Total: {} alias(es) across {} file(s)", aliases.len(), alias_file_paths.len()).green());
         }
-        if let Err(e) = save_deleted_commands(dc_ref, &deleted_commands_path) {
-            eprintln!("Failed to save deleted commands: {}", e);
-        }
-    } else {
-        // This is a subcommand, parse and handle it
-        let cli = parse_args();
+        Operation::Change { old_alias, new_alias } => {
+            use ops::alias_ops::{
+                add_alias_to_multiple_files_force, get_aliases_from_multiple_files,
+                remove_alias_from_multiple_files,
+            };
+            let Some(conn) = open_conn() else { return; };
+            let aliases = get_aliases_from_multiple_files(&alias_file_paths);
+            let old_command = aliases.iter()
+                .find(|(a, _)| a == old_alias)
+                .map(|(_, c)| c.clone());
 
-        match &cli.operation {
-            Some(Operation::Add { alias, command }) => {
-                use ops::alias_ops::add_alias_to_multiple_files;
-                add_alias_to_multiple_files(&alias_file_paths, alias, command);
+            if let Some(command) = old_command {
+                remove_alias_from_multiple_files(&alias_file_paths, old_alias);
                 if let Some(first_path) = alias_file_paths.first() {
-                    add_alias(db_ref, dc_ref, first_path, alias, command);
+                    remove_alias(&conn, first_path, old_alias);
                 }
-                if let Err(e) = save_database(db_ref, &db_path) {
-                    eprintln!("{}", format!("Failed to save database: {}", e).red());
-                }
-                if let Err(e) = save_deleted_commands(dc_ref, &deleted_commands_path) {
-                    eprintln!("{}", format!("Failed to save deleted commands: {}", e).red());
+                add_alias_to_multiple_files_force(&alias_file_paths, new_alias, &command);
+                if let Some(first_path) = alias_file_paths.first() {
+                    add_alias(&conn, first_path, new_alias, &command);
                 }
                 print_source_message();
+            } else {
+                eprintln!("{}", format!("Alias '{}' not found.", old_alias).red());
             }
-            Some(Operation::Remove { alias }) => {
-                use ops::alias_ops::remove_alias_from_multiple_files;
-                remove_alias_from_multiple_files(&alias_file_paths, alias);
-                if let Some(first_path) = alias_file_paths.first() {
-                    remove_alias(dc_ref, first_path, alias);
-                }
-                if let Err(e) = save_deleted_commands(dc_ref, &deleted_commands_path) {
-                    eprintln!("{}", format!("Failed to save deleted commands: {}", e).red());
-                }
-                print_source_message();
-            }
-            Some(Operation::List) => {
-                use ops::alias_ops::get_aliases_from_multiple_files;
-                let aliases = get_aliases_from_multiple_files(&alias_file_paths);
-                if aliases.is_empty() {
-                    println!("{}", "No aliases found.".yellow());
+        }
+        Operation::GetSuggestions { num } => {
+            let Some(conn) = open_conn() else { return; };
+            if let Some(n) = num {
+                if *n == 0 {
+                    eprintln!("{}", "Number of suggestions must be greater than 0.".red());
                     return;
                 }
-                let max_alias_length = aliases.iter().map(|(alias, _)| alias.len()).max().unwrap_or(5).max(5);
-                let max_command_length = aliases.iter().map(|(_, command)| command.len()).max().unwrap_or(7).max(7);
-                let _total_width = 3 + max_alias_length + 3 + max_command_length + 2;
-                println!("{}", format!("┌{:─<alias$}┬{:─<cmd$}┐", "", "", alias = max_alias_length + 2, cmd = max_command_length + 2).cyan());
-                println!("{}", format!("│ {:<alias$} │ {:<cmd$} │", "ALIAS", "COMMAND", alias = max_alias_length, cmd = max_command_length).cyan());
-                println!("{}", format!("├{:─<alias$}┼{:─<cmd$}┤", "", "", alias = max_alias_length + 2, cmd = max_command_length + 2).cyan());
-                for (alias, command) in &aliases {
-                    println!("│ {} │ {} │",
-                        format!("{:<width$}", alias, width = max_alias_length).cyan(),
-                        format!("{:<width$}", command, width = max_command_length)
-                    );
-                }
-                println!("{}", format!("└{:─<alias$}┴{:─<cmd$}┘", "", "", alias = max_alias_length + 2, cmd = max_command_length + 2).cyan());
-                println!("{}", format!("Total: {} alias(es) across {} file(s)", aliases.len(), alias_file_paths.len()).green());
             }
-            Some(Operation::Change { old_alias, new_alias }) => {
-                use ops::alias_ops::remove_alias_from_multiple_files;
-                use ops::alias_ops::add_alias_to_multiple_files_force;
-                use ops::alias_ops::get_aliases_from_multiple_files;
-                
-                // Get all aliases to find the command for the old alias
-                let aliases = get_aliases_from_multiple_files(&alias_file_paths);
-                let old_command = aliases.iter()
-                    .find(|(alias, _)| alias == old_alias)
-                    .map(|(_, command)| command.clone());
-                
-                if let Some(command) = old_command {
-                    // First remove the old alias from all files
-                    remove_alias_from_multiple_files(&alias_file_paths, &old_alias);
-                    if let Some(first_path) = alias_file_paths.first() {
-                        remove_alias(dc_ref, first_path, &old_alias);
-                    }
-                    // Then add the new alias with the same command (force add)
-                    add_alias_to_multiple_files_force(&alias_file_paths, &new_alias, &command);
-                    if let Some(first_path) = alias_file_paths.first() {
-                        add_alias(db_ref, dc_ref, first_path, &new_alias, &command);
-                    }
-                    if let Err(e) = save_database(db_ref, &db_path) {
-                        eprintln!("{}", format!("Failed to save database: {}", e).red());
-                    }
-                    if let Err(e) = save_deleted_commands(dc_ref, &deleted_commands_path) {
-                        eprintln!("{}", format!("Failed to save deleted commands: {}", e).red());
-                    }
-                    print_source_message();
-                } else {
-                    eprintln!("{}", format!("Alias '{}' not found.", old_alias).red());
-                }
+            let default_path = get_default_alias_file_path();
+            let alias_path = alias_file_paths.first().unwrap_or(&default_path);
+            let list = get_suggestions::get_suggestions_with_aliases(*num, &conn, alias_path);
+
+            if list.is_empty() {
+                println!("{}", "No suggestions found.".yellow());
+                return;
             }
-            Some(Operation::GetSuggestions { num }) => {
-                // Get total number of commands in the database
-                let total_commands = db_ref.command_list.len();
-                if let Some(n) = num {
-                    if *n == 0 {
-                        eprintln!("{}", "Number of suggestions must be greater than 0.".red());
-                        return;
-                    }
-                    if *n > total_commands {
-                        eprintln!("{}", format!("Requested number of suggestions (n = {}) exceeds total available commands ({}).", n, total_commands).red());
-                        return;
-                    }
-                }
-                let list = get_suggestions::get_suggestions_with_aliases(*num, db_ref, alias_file_paths.first().unwrap_or(&crate::database::persistence::get_default_alias_file_path()));
-                
-                if list.is_empty() {
-                    println!("{}", "No suggestions found.".yellow());
-                    return;
-                }
 
-                // Prepare filtered list: only top alias, and not a system command
-                let filtered: Vec<_> = list.iter().map(|cmd| {
-                    let top_alias = cmd.alias_suggestions.iter().find(|a| !is_system_command(&a.alias));
-                    (cmd, top_alias)
-                }).collect();
+            let filtered: Vec<_> = list.iter().map(|cmd| {
+                let top_alias = cmd.alias_suggestions.iter().find(|a| !is_system_command(&a.alias));
+                (cmd, top_alias)
+            }).collect();
 
-                // Find the longest command, alias, and score for alignment
-                let max_command_length = filtered.iter().map(|(cmd, _)| cmd.command.command_text.len()).max().unwrap_or(7).max(7); // at least 'COMMAND'
-                let max_alias_length = filtered.iter().map(|(_, alias_opt)| alias_opt.map(|a| a.alias.len()).unwrap_or(0)).max().unwrap_or(9).max(9); // at least 'TOP ALIAS'
-                let max_score_length = filtered.iter().map(|(cmd, _)| cmd.command.score.to_string().len()).max().unwrap_or(5).max(5); // at least 'SCORE'
+            let max_command_length = filtered.iter().map(|(c, _)| c.command.command_text.len()).max().unwrap_or(7).max(7);
+            let max_alias_length   = filtered.iter().map(|(_, a)| a.map(|x| x.alias.len()).unwrap_or(0)).max().unwrap_or(9).max(9);
+            let max_score_length   = filtered.iter().map(|(c, _)| format!("{:.0}", c.command.score).len()).max().unwrap_or(5).max(5);
 
-                // Table width: borders + padding + columns
-                let _total_width = 3 + max_command_length + 3 + max_alias_length + 3 + max_score_length + 2; // | command | alias | score |
+            println!("{}", format!("┌{:─<cmd$}┬{:─<alias$}┬{:─<score$}┐", "", "", "", cmd = max_command_length + 2, alias = max_alias_length + 2, score = max_score_length + 2).cyan());
+            println!("{}", format!("│ {:<cmd$} │ {:>alias$} │ {:>score$} │", "COMMAND", "TOP ALIAS", "SCORE", cmd = max_command_length, alias = max_alias_length, score = max_score_length).cyan());
+            println!("{}", format!("├{:─<cmd$}┼{:─<alias$}┼{:─<score$}┤", "", "", "", cmd = max_command_length + 2, alias = max_alias_length + 2, score = max_score_length + 2).cyan());
 
-                // Top border
-                println!("{}", format!("┌{:─<cmd$}┬{:─<alias$}┬{:─<score$}┐", "", "", "", cmd = max_command_length + 2, alias = max_alias_length + 2, score = max_score_length + 2).cyan());
-                // Header
-                println!("{}", format!("│ {:<cmd$} │ {:>alias$} │ {:>score$} │", "COMMAND", "TOP ALIAS", "SCORE", cmd = max_command_length, alias = max_alias_length, score = max_score_length).cyan());
-                // Separator
-                println!("{}", format!("├{:─<cmd$}┼{:─<alias$}┼{:─<score$}┤", "", "", "", cmd = max_command_length + 2, alias = max_alias_length + 2, score = max_score_length + 2).cyan());
-
-                // Rows
-                for (cmd_with_alias, top_alias_opt) in &filtered {
-                    let command_text = format!("{:<width$}", cmd_with_alias.command.command_text, width = max_command_length);
-                    let alias_text = if let Some(top_alias) = top_alias_opt {
-                        format!("{:>width$}", top_alias.alias, width = max_alias_length)
-                    } else {
-                        format!("{:>width$}", "", width = max_alias_length)
-                    };
-                    let score_text = format!("{:>width$}", cmd_with_alias.command.score, width = max_score_length);
-                    println!("│ {} │ {} │ {} │",
-                        command_text.bold(),
-                        alias_text.cyan(),
-                        score_text.yellow()
-                    );
-                }
-
-                // Bottom border
-                println!("{}", format!("└{:─<cmd$}┴{:─<alias$}┴{:─<score$}┘", "", "", "", cmd = max_command_length + 2, alias = max_alias_length + 2, score = max_score_length + 2).cyan());
-                println!("{}", format!("Total: {} suggestion(s)", filtered.len()).green());
+            for (cmd_with_alias, top_alias_opt) in &filtered {
+                let command_text = format!("{:<width$}", cmd_with_alias.command.command_text, width = max_command_length);
+                let alias_text = top_alias_opt
+                    .map(|a| format!("{:>width$}", a.alias, width = max_alias_length))
+                    .unwrap_or_else(|| format!("{:>width$}", "", width = max_alias_length));
+                let score_text = format!("{:>width$}", format!("{:.0}", cmd_with_alias.command.score), width = max_score_length);
+                println!("│ {} │ {} │ {} │",
+                    command_text.bold(),
+                    alias_text.cyan(),
+                    score_text.yellow(),
+                );
             }
-            Some(Operation::DeleteSuggestion { alias }) => {
-                delete_suggestion(alias, db_ref, dc_ref);
-                println!("{}", format!("Deleted suggestions for: {}", alias).yellow());
-                if let Err(e) = save_database(db_ref, &db_path) {
-                    eprintln!("{}", format!("Failed to save database: {}", e).red());
-                }
-                if let Err(e) = save_deleted_commands(dc_ref, &deleted_commands_path) {
-                    eprintln!("{}", format!("Failed to save deleted commands: {}", e).red());
-                }
+
+            println!("{}", format!("└{:─<cmd$}┴{:─<alias$}┴{:─<score$}┘", "", "", "", cmd = max_command_length + 2, alias = max_alias_length + 2, score = max_score_length + 2).cyan());
+            println!("{}", format!("Total: {} suggestion(s)", filtered.len()).green());
+        }
+        Operation::DeleteSuggestion { alias } => {
+            let Some(conn) = open_conn() else { return; };
+            delete_suggestion(alias, &conn);
+            println!("{}", format!("Deleted suggestions for: {}", alias).yellow());
+        }
+        Operation::Tui => {
+            let tui_path = cli.alias_file_path.clone().unwrap_or_else(|| {
+                alias_file_paths.first().unwrap_or(&get_default_alias_file_path()).into()
+            });
+            let Some(conn) = open_conn() else { return; };
+            if let Err(e) = run_tui(tui_path, alias_file_paths, conn) {
+                eprintln!("{}", format!("TUI error: {}", e).red());
             }
-            Some(Operation::Tui) => {
-                let tui_path = cli.alias_file_path.clone().unwrap_or_else(|| {
-                    alias_file_paths.first().unwrap_or(&crate::database::persistence::get_default_alias_file_path()).into()
+        }
+        Operation::Init { shell } => {
+            let opts = ShellOpts::new();
+            println!("{}", render_shell_init(shell.clone(), &opts));
+        }
+        Operation::InitData => {
+            if let Err(e) = ensure_data_directory() {
+                eprintln!("Failed to create data directory: {}", e);
+                return;
+            }
+            if let Err(e) = ensure_config_directory() {
+                eprintln!("Failed to create config directory: {}", e);
+                return;
+            }
+            if load_config().is_none() {
+                let _ = save_config(&AppConfig {
+                    alias_file_paths: vec![get_default_alias_file_path()],
                 });
-                if let Err(e) = run_tui(tui_path, alias_file_paths) {
-                    eprintln!("{}", format!("TUI error: {}", e).red());
-                }
             }
-            Some(Operation::Init { shell }) => {
-                let opts = ShellOpts::new();
-                let init_script = render_shell_init(shell.clone(), &opts);
-                println!("{}", init_script);
+            // Opening the DB creates the schema and runs migration if needed.
+            if let Err(e) = open(&get_db_path()) {
+                eprintln!("Failed to initialize database: {}", e);
+                return;
             }
-            Some(Operation::InitData) => {
-                // Initialize the data directory (for database and deleted commands)
-                if let Err(e) = ensure_data_directory() {
-                    eprintln!("Failed to create data directory: {}", e);
-                    return;
-                }
-                
-                // Initialize the config directory (for config and aliases)
-                if let Err(e) = crate::database::persistence::ensure_config_directory() {
-                    eprintln!("Failed to create config directory: {}", e);
-                    return;
-                }
-                
-                // Create default config if it doesn't exist
-                if load_config().is_none() {
-                    let default_config = AppConfig {
-                        alias_file_paths: vec![crate::database::persistence::get_default_alias_file_path()],
-                    };
-                    if let Err(e) = save_config(&default_config) {
-                        eprintln!("Failed to save config: {}", e);
+            let default_alias_path = get_default_alias_file_path();
+            if !Path::new(&default_alias_path).exists() {
+                if let Some(parent) = Path::new(&default_alias_path).parent() {
+                    if let Err(e) = fs::create_dir_all(parent) {
+                        eprintln!("Failed to create alias file directory: {}", e);
+                        return;
                     }
                 }
-                
-                // Create empty database and deleted commands files if they don't exist
-                let db_path = get_database_path();
-                let deleted_commands_path = get_deleted_commands_path();
-                
-                if !std::path::Path::new(&db_path).exists() {
-                    let empty_db = Database {
-                        command_list: std::collections::BTreeSet::new(),
-                        reverse_command_map: std::collections::HashMap::new(),
-                        total_num_commands: 0,
-                        total_score: 0,
-                    };
-                    if let Err(e) = save_database(&empty_db, &db_path) {
-                        eprintln!("Failed to create database file: {}", e);
-                    }
-                }
-                
-                if !std::path::Path::new(&deleted_commands_path).exists() {
-                    let empty_deleted = DeletedCommands {
-                        deleted_commands: std::collections::BTreeSet::new(),
-                    };
-                    if let Err(e) = save_deleted_commands(&empty_deleted, &deleted_commands_path) {
-                        eprintln!("Failed to create deleted commands file: {}", e);
-                    }
-                }
-                
-                // Create default alias file if it doesn't exist
-                let default_alias_path = crate::database::persistence::get_default_alias_file_path();
-                if !std::path::Path::new(&default_alias_path).exists() {
-                    // Ensure the parent directory exists
-                    if let Some(parent) = std::path::Path::new(&default_alias_path).parent() {
-                        if let Err(e) = std::fs::create_dir_all(parent) {
-                            eprintln!("Failed to create alias file directory: {}", e);
-                            return;
-                        }
-                    }
-                    if let Err(e) = std::fs::write(&default_alias_path, "# Alman aliases file\n") {
-                        eprintln!("Failed to create alias file: {}", e);
-                    }
-                }
+                let _ = fs::write(&default_alias_path, "# Alman aliases file\n");
             }
-            Some(Operation::ListAliasFiles) => {
-                // Handled in the fast-path above; unreachable here.
-            }
-            None => {}
+        }
+        Operation::ListAliasFiles => {
+            // Handled in the fast-path above; unreachable here.
         }
     }
 }

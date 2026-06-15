@@ -1,39 +1,55 @@
-use crate::database::database_structs::{Database, DeletedCommands};
+use crate::database::db::now_secs;
+use crate::database::history_loader::upsert_prefixes;
+use rusqlite::Connection;
 
-pub fn insert_command(command_str: String, db: &mut Database, deleted_commands: &DeletedCommands) {
-    // now we should find every prefix of the command and insert that
-    // for example, if git add . ; we should insert git, git add, git add .
-    // should have single space between words in command, input may have multiple spaces
+pub fn insert_command(
+    command_str: String,
+    conn: &Connection,
+    session_id: Option<&str>,
+    cwd: Option<&str>,
+) {
     let command_str = command_str.trim().to_string();
     if command_str.is_empty() {
-        return; // Do not insert empty commands
+        return;
     }
-    let command_parts: Vec<&str> = command_str.split_whitespace().collect();
-    if command_parts.is_empty() {
-        return; // Do not insert commands with no words
+
+    let parts: Vec<&str> = command_str.split_whitespace().collect();
+    if parts.is_empty() {
+        return;
     }
-    
-    // Skip commands that start with the current binary name
+
+    // Skip commands that start with the alman binary itself
     let binary_name = std::env::args()
         .next()
-        .and_then(|path| std::path::Path::new(&path).file_name().map(|f| f.to_os_string()))
-        .and_then(|os_str| os_str.into_string().ok());
-    if let Some(name) = binary_name {
-        if command_parts[0] == name {
+        .and_then(|p| std::path::Path::new(&p).file_name().map(|f| f.to_os_string()))
+        .and_then(|s| s.into_string().ok());
+    if let Some(ref name) = binary_name {
+        if parts[0] == name.as_str() {
             return;
         }
     }
-    
-    // maintain a string called temp, which stores command so far and then we do a for loop
-    let mut temp = String::new();
-    for word in command_parts.iter() {
-        if !temp.is_empty() {
-            temp.push(' '); // Add a space before the next word
+
+    let now = now_secs();
+
+    let tx = match conn.unchecked_transaction() {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("alman: DB error starting transaction: {e}");
+            return;
         }
-        temp.push_str(word);
-        let tempp = temp.clone();
-        // Insert the current command prefix into the database
-        db.add_command(tempp, deleted_commands);
+    };
+
+    if let Err(e) = tx.execute(
+        "INSERT INTO events (command, ts, session_id, cwd, exit_code) VALUES (?1, ?2, ?3, ?4, NULL)",
+        rusqlite::params![command_str, now, session_id, cwd],
+    ) {
+        eprintln!("alman: DB error inserting event: {e}");
+        return;
     }
-    db.add_command(command_str, deleted_commands);
+
+    upsert_prefixes(&tx, &command_str, now);
+
+    if let Err(e) = tx.commit() {
+        eprintln!("alman: DB error committing: {e}");
+    }
 }

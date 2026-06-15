@@ -41,7 +41,7 @@ pub fn render_command_details_popup(f: &mut Frame, app: &App) {
             ]),
             Line::from(vec![
                 Span::styled("Score: ", Style::default().fg(Color::Cyan)),
-                Span::styled(cmd.score.to_string(), Style::default().fg(Color::Green)),
+                Span::styled(format!("{:.0}", cmd.score), Style::default().fg(Color::Green)),
             ]),
             Line::from(vec![
                 Span::styled("Frequency: ", Style::default().fg(Color::Cyan)),

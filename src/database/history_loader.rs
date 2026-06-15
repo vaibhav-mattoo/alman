@@ -1,90 +1,130 @@
-use super::database_structs::{Command, Database, DeletedCommands};
+use rusqlite::Connection;
 use std::env;
 use std::fs;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-pub fn initialize_database_from_history(
-    db: &mut Database,
-    deleted_commands: &DeletedCommands,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // Only initialize if database is empty
-    if !db.command_list.is_empty() {
-        return Ok(());
+use super::db::now_secs;
+
+/// If `events` is empty (fresh DB), load the shell history file and seed both
+/// `events` and `command_stats`.  cwd/session/exit are NULL for bootstrapped rows.
+pub fn bootstrap_from_history(conn: &Connection) {
+    // Only seed when the database is empty
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))
+        .unwrap_or(0);
+    if count > 0 {
+        return;
     }
 
-    let history_file = get_history_file_path()?;
+    let history_file = match get_history_file_path() {
+        Ok(f) => f,
+        Err(_) => return,
+    };
     if !Path::new(&history_file).exists() {
-        return Ok(());
+        return;
     }
 
-    // Safety check: ensure we're not accidentally writing to the history file
-    if history_file.contains("history") || history_file.contains("HIST") {
-        // Double-check that we're only reading, not writing
-        let metadata = fs::metadata(&history_file)?;
-        if metadata.is_file() {
-            // Read the file content safely, handling encoding errors
-            let history_content = match fs::read_to_string(&history_file) {
-                Ok(content) => content,
-                Err(e) => {
-                    eprintln!(
-                        "Warning: Could not read history file '{}': {}",
-                        history_file, e
-                    );
-                    eprintln!("Attempting to read with lossy conversion...");
-                    match fs::read(&history_file) {
-                        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-                        Err(e2) => {
-                            eprintln!("Error: Could not read history file at all: {}", e2);
-                            return Ok(());
-                        }
-                    }
-                }
-            };
+    let content = match fs::read_to_string(&history_file) {
+        Ok(c) => c,
+        Err(_) => match fs::read(&history_file) {
+            Ok(b) => String::from_utf8_lossy(&b).into_owned(),
+            Err(_) => return,
+        },
+    };
 
-            let commands = parse_history_file(&history_content);
+    let commands = parse_history_file(&content);
+    if commands.is_empty() {
+        return;
+    }
 
-            if commands.is_empty() {
-                return Ok(());
-            }
+    let binary_name = env::args()
+        .next()
+        .and_then(|p| Path::new(&p).file_name().map(|f| f.to_os_string()))
+        .and_then(|s| s.into_string().ok());
 
-            // Calculate time intervals (2 minutes apart, going backwards from now)
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            let interval_seconds = 120; // 2 minutes
+    let base_ts = now_secs();
+    let interval = 120_i64; // 2 min spacing going backwards
 
-            for (i, command) in commands.iter().enumerate() {
-                let timestamp = now - (i as u64 * interval_seconds);
-                insert_command_with_timestamp(command, timestamp, db, deleted_commands);
+    let tx = match conn.unchecked_transaction() {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+
+    for (i, command) in commands.iter().enumerate() {
+        let cmd = command.trim();
+        if cmd.is_empty() || cmd.len() <= 2 {
+            continue;
+        }
+        let parts: Vec<&str> = cmd.split_whitespace().collect();
+        if parts.len() <= 1 && cmd.len() <= 5 {
+            continue;
+        }
+        if let Some(ref name) = binary_name {
+            if parts.first().map(|w| *w == name.as_str()).unwrap_or(false) {
+                continue;
             }
         }
+
+        let ts = base_ts - (i as i64 * interval);
+
+        let _ = tx.execute(
+            "INSERT INTO events (command, ts, session_id, cwd, exit_code) VALUES (?1, ?2, NULL, NULL, NULL)",
+            rusqlite::params![cmd, ts],
+        );
+
+        upsert_prefixes(&tx, cmd, ts);
     }
 
-    Ok(())
+    let _ = tx.commit();
 }
 
+/// Insert or increment command_stats rows for a command and all its word-prefixes.
+pub fn upsert_prefixes(conn: &Connection, full_cmd: &str, ts: i64) {
+    let parts: Vec<&str> = full_cmd.split_whitespace().collect();
+    let mut temp = String::new();
+
+    for word in &parts {
+        if !temp.is_empty() {
+            temp.push(' ');
+        }
+        temp.push_str(word);
+
+        let word_count = temp.split_whitespace().count();
+        let length: i64 = temp.split_whitespace().map(|s| s.len()).sum::<usize>() as i64;
+        if word_count == 1 && length <= 5 {
+            continue;
+        }
+
+        let _ = conn.execute(
+            "INSERT INTO command_stats (command_text, frequency, last_access_time, length)
+             SELECT ?1, 1, ?2, ?3
+             WHERE ?1 NOT IN (SELECT command_text FROM dismissed)
+             ON CONFLICT(command_text) DO UPDATE SET
+               frequency        = frequency + 1,
+               last_access_time = excluded.last_access_time",
+            rusqlite::params![temp, ts, length],
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// History file parsing (unchanged logic)
+// ---------------------------------------------------------------------------
+
 fn get_history_file_path() -> Result<String, Box<dyn std::error::Error>> {
-    // Try to get HISTFILE from environment
     if let Ok(histfile) = env::var("HISTFILE") {
         if !histfile.is_empty() {
             return Ok(histfile);
         }
     }
 
-    // Fallback to shell-specific default history files in order of preference
     let home_dir = dirs::home_dir().ok_or("Could not determine home directory")?;
-
-    // Try common history file locations in order of preference
     let possible_paths = vec![
-        // Fish history in correct location (highest priority)
-        home_dir.join(".local/share/fish/fish_history"), // First priority
-        home_dir.join(".zsh_history"),                   // Second priority
-        home_dir.join(".bash_history"),                  // Third priority
-        home_dir.join(".history"),                       // Fourth priority
-        // Fallback to old fish location (for compatibility)
-        home_dir.join(".fish_history"), // Fifth priority
+        home_dir.join(".local/share/fish/fish_history"),
+        home_dir.join(".zsh_history"),
+        home_dir.join(".bash_history"),
+        home_dir.join(".history"),
+        home_dir.join(".fish_history"),
     ];
 
     for path in possible_paths {
@@ -98,16 +138,12 @@ fn get_history_file_path() -> Result<String, Box<dyn std::error::Error>> {
 
 fn parse_history_file(content: &str) -> Vec<String> {
     let mut commands = Vec::new();
-    let lines: Vec<&str> = content.lines().collect();
 
-    // Process lines from last to first (most recent first)
-    for line in lines.iter().rev() {
+    for line in content.lines().rev() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
-
-        // Skip lines that are likely not commands
         if trimmed.starts_with('#')
             || trimmed.starts_with("HISTTIMEFORMAT")
             || trimmed.starts_with("HISTSIZE")
@@ -116,8 +152,7 @@ fn parse_history_file(content: &str) -> Vec<String> {
             continue;
         }
 
-        // Extract command from history line
-        let command = extract_command_from_history_line(trimmed);
+        let command = extract_command(trimmed);
         if !command.is_empty() && command.len() > 2 {
             commands.push(command);
         }
@@ -126,150 +161,31 @@ fn parse_history_file(content: &str) -> Vec<String> {
     commands
 }
 
-fn extract_command_from_history_line(line: &str) -> String {
-    // Handle different history file formats
-
-    // Zsh history format: ": 1234567890:0;command"
+fn extract_command(line: &str) -> String {
+    // Zsh: ": 1234567890:0;command"
     if line.starts_with(": ") {
-        if let Some(semicolon_pos) = line.find(';') {
-            let command_part = line[semicolon_pos + 1..].trim();
-            // Return the command part if it's not empty
-            if !command_part.is_empty() {
-                return command_part.to_string();
+        if let Some(pos) = line.find(';') {
+            let cmd = line[pos + 1..].trim();
+            if !cmd.is_empty() {
+                return cmd.to_string();
             }
         }
-        // If we can't parse it properly, return empty
         return String::new();
     }
 
-    // Fish history format: "- cmd:command"
-    if line.starts_with("- cmd:") {
-        let command_part = line[6..].trim();
-        if !command_part.is_empty() {
-            return command_part.to_string();
+    // Fish: "- cmd:command"
+    if let Some(stripped) = line.strip_prefix("- cmd:") {
+        let cmd = stripped.trim();
+        if !cmd.is_empty() {
+            return cmd.to_string();
         }
         return String::new();
     }
 
-    // Bash history format: just the command
-    // But might have timestamps in some cases
+    // Timestamp-only bash lines
     if line.starts_with('#') {
-        // Skip timestamp lines
         return String::new();
     }
 
-    // Default: assume it's just the command (plain history format)
-    // For plain commands, just return the line as-is
     line.to_string()
 }
-
-fn insert_command_with_timestamp(
-    command: &str,
-    timestamp: u64,
-    db: &mut Database,
-    deleted_commands: &DeletedCommands,
-) {
-    if command.is_empty() || deleted_commands.deleted_commands.contains(command) {
-        return;
-    }
-
-    // Skip commands that are too short or single-word
-    let parts: Vec<&str> = command.split_whitespace().collect();
-    if parts.len() <= 1 || command.len() <= 5 {
-        return;
-    }
-
-    // Skip commands that start with the current binary name
-    let binary_name = std::env::args()
-        .next()
-        .and_then(|path| {
-            std::path::Path::new(&path)
-                .file_name()
-                .map(|f| f.to_os_string())
-        })
-        .and_then(|os_str| os_str.into_string().ok());
-    if let Some(name) = binary_name {
-        if parts[0] == name {
-            return;
-        }
-    }
-
-    // Create command with the specified timestamp
-    let length: i16 = command.split_whitespace().map(|s| s.len()).sum::<usize>() as i16;
-    let number_of_words: i8 = parts.len() as i8;
-    let frequency: i32 = 1;
-
-    let mut new_command = Command {
-        score: 0, // Will be calculated below
-        last_access_time: timestamp as i64,
-        frequency,
-        length,
-        command_text: command.to_string(),
-        number_of_words,
-    };
-
-    // Calculate score
-    new_command.score = calculate_score(&new_command);
-
-    // Insert command and all its prefixes
-    let mut temp = String::new();
-    for word in parts.iter() {
-        if !temp.is_empty() {
-            temp.push(' ');
-        }
-        temp.push_str(word);
-
-        if temp.len() > 2 {
-            let prefix_command = create_prefix_command(&temp, timestamp);
-            db.add_command_with_existing(prefix_command);
-        }
-    }
-
-    // Add the full command
-    db.add_command_with_existing(new_command);
-}
-
-fn create_prefix_command(command_text: &str, timestamp: u64) -> Command {
-    let length: i16 = command_text
-        .split_whitespace()
-        .map(|s| s.len())
-        .sum::<usize>() as i16;
-    let number_of_words: i8 = command_text.split_whitespace().count() as i8;
-    let frequency: i32 = 1;
-
-    let mut command = Command {
-        score: 0,
-        last_access_time: timestamp as i64,
-        frequency,
-        length,
-        command_text: command_text.to_string(),
-        number_of_words,
-    };
-
-    command.score = calculate_score(&command);
-    command
-}
-
-fn calculate_score(command: &Command) -> i32 {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64;
-    let time_difference: i64 = now - command.last_access_time;
-
-    let mult: f64 = if time_difference <= 3600 {
-        4.0
-    } else if time_difference <= 86400 {
-        2.0
-    } else if time_difference <= 604800 {
-        0.5
-    } else {
-        0.25
-    };
-
-    let length = command.length as f64;
-    let frequency = command.frequency as f64;
-
-    (mult * length.powf(3.0 / 5.0) * frequency) as i32
-}
-
