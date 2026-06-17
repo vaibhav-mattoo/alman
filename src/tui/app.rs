@@ -1,7 +1,7 @@
 use crate::database::database_structs::Command;
 use crate::database::db::now_secs;
-use crate::ops::alias_suggestions::AliasSuggestion;
-use crate::ops::get_suggestions::query_top_commands;
+use crate::ops::alias_suggestions::{AliasSuggester, AliasSuggestion};
+use crate::ops::get_suggestions::{query_filtered_commands, query_top_commands};
 use ratatui::widgets::ListState;
 use rusqlite::Connection;
 use std::path::PathBuf;
@@ -19,12 +19,14 @@ pub enum AppMode {
     ListAliases,
 }
 
-#[derive(Debug)]
 pub struct App {
     pub mode: AppMode,
     pub input: String,
     pub cursor_position: usize,
+    /// Tracks selection in the command list (Main / AddAliasStep1).
     pub list_state: ListState,
+    /// Tracks selection in alias lists (RemoveAliasStep1 / ChangeAliasStep1).
+    pub alias_list_state: ListState,
     pub commands: Vec<Command>,
     pub filtered_commands: Vec<Command>,
     pub alias_file_path: PathBuf,
@@ -56,13 +58,25 @@ pub struct App {
     pub selected_command_details: Option<Command>,
     pub command_details_selection: usize,
     pub show_command_details_popup: bool,
-    pub config_changed: bool,
+    /// Cached suggester — built once per TUI session on first use.
+    pub suggester: Option<AliasSuggester>,
+}
+
+impl std::fmt::Debug for App {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("App")
+            .field("mode", &self.mode)
+            .field("input", &self.input)
+            .finish()
+    }
 }
 
 impl App {
     pub fn new(alias_file_path: PathBuf, alias_file_paths: Vec<String>) -> Self {
         let mut list_state = ListState::default();
         list_state.select(Some(0));
+        let mut alias_list_state = ListState::default();
+        alias_list_state.select(Some(0));
         let mut alias_suggestions_state = ListState::default();
         alias_suggestions_state.select(Some(0));
         let mut change_alias_suggestions_state = ListState::default();
@@ -74,6 +88,7 @@ impl App {
             input: String::new(),
             cursor_position: 0,
             list_state,
+            alias_list_state,
             commands: Vec::new(),
             filtered_commands: Vec::new(),
             alias_file_path,
@@ -105,7 +120,7 @@ impl App {
             selected_command_details: None,
             command_details_selection: 0,
             show_command_details_popup: false,
-            config_changed: false,
+            suggester: None,
         }
     }
 
@@ -116,17 +131,14 @@ impl App {
         self.list_state.select(None);
     }
 
-    pub fn filter_commands(&mut self) {
+    /// Re-query commands matching `self.input` via SQL (pushes filter to DB).
+    /// Falls back to the pre-loaded top-20 when input is empty.
+    pub fn filter_commands(&mut self, conn: &Connection) {
         if self.input.is_empty() {
             self.filtered_commands = self.commands.clone();
         } else {
-            let filter = self.input.to_lowercase();
-            self.filtered_commands = self
-                .commands
-                .iter()
-                .filter(|cmd| cmd.command_text.to_lowercase().contains(&filter))
-                .cloned()
-                .collect();
+            let now = now_secs();
+            self.filtered_commands = query_filtered_commands(conn, now, &self.input, 50);
         }
         self.list_state.select(None);
     }
@@ -142,11 +154,12 @@ impl App {
     }
 
     pub fn get_selected_command(&self) -> Option<&Command> {
-        if let Some(selected) = self.list_state.selected() {
-            self.filtered_commands.get(selected)
-        } else {
-            None
+        let selected = self.list_state.selected()?;
+        if self.filtered_commands.is_empty() {
+            return None;
         }
+        let clamped = selected.min(self.filtered_commands.len() - 1);
+        self.filtered_commands.get(clamped)
     }
 
     pub fn clear_input(&mut self) {
@@ -172,6 +185,7 @@ impl App {
         self.aliases.clear();
         self.filtered_aliases.clear();
         self.list_aliases_state.select(None);
+        self.alias_list_state.select(None);
         self.selected_command_details = None;
         self.command_details_selection = 0;
     }
@@ -210,11 +224,12 @@ impl App {
         }
     }
 
+    /// Generate alias suggestions, using and populating the session-level cache.
     pub fn generate_alias_suggestions(&mut self) {
-        if let Some(command) = &self.selected_command {
-            use crate::ops::alias_suggestions::AliasSuggester;
-            let suggester = AliasSuggester::new(&self.alias_file_path.to_string_lossy());
-            self.alias_suggestions = suggester.suggest_aliases(command);
+        if let Some(command) = self.selected_command.clone() {
+            let paths = self.alias_file_paths.clone();
+            let suggester = self.suggester.get_or_insert_with(|| AliasSuggester::new(&paths));
+            self.alias_suggestions = suggester.suggest_aliases(&command);
         }
     }
 
@@ -222,7 +237,7 @@ impl App {
         use crate::ops::alias_ops::get_aliases_from_multiple_files;
         self.aliases = get_aliases_from_multiple_files(&self.alias_file_paths);
         self.filtered_aliases = self.aliases.clone();
-        self.list_state.select(None);
+        self.alias_list_state.select(None);
     }
 
     pub fn filter_aliases(&mut self) {
@@ -240,22 +255,26 @@ impl App {
                 .cloned()
                 .collect();
         }
+        self.alias_list_state.select(None);
     }
 
     pub fn get_selected_alias(&self) -> Option<&(String, String)> {
-        if let Some(selected) = self.list_state.selected() {
-            self.filtered_aliases.get(selected)
-        } else {
-            None
+        let selected = self.alias_list_state.selected()?;
+        if self.filtered_aliases.is_empty() {
+            return None;
         }
+        let clamped = selected.min(self.filtered_aliases.len() - 1);
+        self.filtered_aliases.get(clamped)
     }
 
+    /// Generate change-alias suggestions using the session-level cache.
     pub fn generate_change_alias_suggestions(&mut self) {
-        if let Some(old_alias) = &self.change_old_alias {
-            if let Some((_, command)) = self.aliases.iter().find(|(alias, _)| alias == old_alias) {
-                use crate::ops::alias_suggestions::AliasSuggester;
-                let suggester = AliasSuggester::new(&self.alias_file_path.to_string_lossy());
-                self.change_alias_suggestions = suggester.suggest_aliases(command);
+        if let Some(old_alias) = self.change_old_alias.clone() {
+            if let Some((_, command)) = self.aliases.iter().find(|(alias, _)| *alias == old_alias) {
+                let command = command.clone();
+                let paths = self.alias_file_paths.clone();
+                let suggester = self.suggester.get_or_insert_with(|| AliasSuggester::new(&paths));
+                self.change_alias_suggestions = suggester.suggest_aliases(&command);
             }
         }
     }

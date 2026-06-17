@@ -1,9 +1,10 @@
 use crate::cli::cli_data::Operation;
 use crate::tui::app::{App, AppMode};
 use ratatui::crossterm::event::KeyCode;
+use rusqlite::Connection;
 
 impl App {
-    pub fn handle_key_event(&mut self, key: KeyCode) -> Option<Operation> {
+    pub fn handle_key_event(&mut self, key: KeyCode, conn: &Connection) -> Option<Operation> {
 
         if self.show_popup {
             match key {
@@ -31,7 +32,7 @@ impl App {
                 }
                 KeyCode::Enter => {
                     match self.command_details_selection {
-                        0 => { // Add Alias
+                        0 => {
                             if let Some(cmd) = &self.selected_command_details {
                                 self.selected_command = Some(cmd.command_text.clone());
                                 self.input = cmd.command_text.clone();
@@ -42,7 +43,7 @@ impl App {
                             }
                             self.show_command_details_popup = false;
                         }
-                        1 => { // Delete Suggestion
+                        1 => {
                             if let Some(cmd) = &self.selected_command_details {
                                 let command_text = cmd.command_text.clone();
                                 self.show_command_details_popup = false;
@@ -52,7 +53,7 @@ impl App {
                             }
                             self.show_command_details_popup = false;
                         }
-                        2 => { // Back
+                        2 => {
                             self.show_command_details_popup = false;
                             self.selected_command_details = None;
                             self.command_details_selection = 0;
@@ -74,8 +75,8 @@ impl App {
         }
 
         match self.mode {
-            AppMode::Main => self.handle_main_mode(key),
-            AppMode::AddAliasStep1 => self.handle_add_alias_step1(key),
+            AppMode::Main => self.handle_main_mode(key, conn),
+            AppMode::AddAliasStep1 => self.handle_add_alias_step1(key, conn),
             AppMode::AddAliasStep2 => self.handle_add_alias_step2(key),
             AppMode::AddAliasConfirmation => self.handle_add_alias_confirmation(key),
             AppMode::RemoveAliasStep1 => self.handle_remove_alias_step1(key),
@@ -83,11 +84,10 @@ impl App {
             AppMode::ChangeAliasStep1 => self.handle_change_alias_step1(key),
             AppMode::ChangeAliasStep2 => self.handle_change_alias_step2(key),
             AppMode::ListAliases => self.handle_list_aliases(key),
-
         }
     }
 
-    fn handle_main_mode(&mut self, key: KeyCode) -> Option<Operation> {
+    fn handle_main_mode(&mut self, key: KeyCode, conn: &Connection) -> Option<Operation> {
         match key {
             KeyCode::Char('q') => {
                 self.should_quit = true;
@@ -119,14 +119,8 @@ impl App {
             KeyCode::Up => {
                 if !self.filtered_commands.is_empty() {
                     let selected = match self.list_state.selected() {
-                        Some(i) => {
-                            if i > 0 {
-                                i - 1
-                            } else {
-                                i
-                            }
-                        }
-                        None => 0,
+                        Some(i) if i > 0 => i - 1,
+                        _ => 0,
                     };
                     self.list_state.select(Some(selected));
                 }
@@ -134,14 +128,10 @@ impl App {
             }
             KeyCode::Down => {
                 if !self.filtered_commands.is_empty() {
+                    let max = self.filtered_commands.len() - 1;
                     let selected = match self.list_state.selected() {
-                        Some(i) => {
-                            if i < self.filtered_commands.len() - 1 {
-                                i + 1
-                            } else {
-                                i
-                            }
-                        }
+                        Some(i) if i < max => i + 1,
+                        Some(i) => i,
                         None => 0,
                     };
                     self.list_state.select(Some(selected));
@@ -164,7 +154,7 @@ impl App {
             KeyCode::Char(c) => {
                 self.input.push(c);
                 self.cursor_position = self.input.len();
-                self.filter_commands();
+                self.filter_commands(conn);
                 self.status_message = format!("Filtering: '{}' (Esc to clear)", self.input);
                 None
             }
@@ -172,7 +162,7 @@ impl App {
                 if !self.input.is_empty() {
                     self.input.pop();
                     self.cursor_position = self.input.len();
-                    self.filter_commands();
+                    self.filter_commands(conn);
                     if self.input.is_empty() {
                         self.status_message = "Filter cleared".to_string();
                     } else {
@@ -184,7 +174,7 @@ impl App {
             KeyCode::Esc => {
                 if !self.input.is_empty() {
                     self.clear_input();
-                    self.filter_commands();
+                    self.filter_commands(conn);
                     self.status_message = "Filter cleared".to_string();
                 }
                 None
@@ -193,7 +183,7 @@ impl App {
         }
     }
 
-    fn handle_add_alias_step1(&mut self, key: KeyCode) -> Option<Operation> {
+    fn handle_add_alias_step1(&mut self, key: KeyCode, conn: &Connection) -> Option<Operation> {
         match key {
             KeyCode::Enter => {
                 let command_text = if let Some(cmd) = self.get_selected_command() {
@@ -204,7 +194,7 @@ impl App {
                     self.status_message = "Please select a command or type one".to_string();
                     return None;
                 };
-                
+
                 self.selected_command = Some(command_text.clone());
                 self.input = command_text;
                 self.cursor_position = self.input.len();
@@ -216,43 +206,32 @@ impl App {
             KeyCode::Char(c) => {
                 self.input.insert(self.cursor_position, c);
                 self.cursor_position += 1;
-                self.filter_commands();
+                self.filter_commands(conn);
                 None
             }
             KeyCode::Backspace => {
                 if self.cursor_position > 0 {
                     self.input.remove(self.cursor_position - 1);
                     self.cursor_position -= 1;
-                    self.filter_commands();
+                    self.filter_commands(conn);
                 }
                 None
             }
             KeyCode::Left => {
-                if self.cursor_position > 0 {
-                    self.cursor_position -= 1;
-                }
+                if self.cursor_position > 0 { self.cursor_position -= 1; }
                 None
             }
             KeyCode::Right => {
-                if self.cursor_position < self.input.len() {
-                    self.cursor_position += 1;
-                }
+                if self.cursor_position < self.input.len() { self.cursor_position += 1; }
                 None
             }
             KeyCode::Up => {
                 if !self.filtered_commands.is_empty() {
                     let selected = match self.list_state.selected() {
-                        Some(i) => {
-                            if i > 0 {
-                                i - 1
-                            } else {
-                                i
-                            }
-                        }
-                        None => 0,
+                        Some(i) if i > 0 => i - 1,
+                        _ => 0,
                     };
                     self.list_state.select(Some(selected));
-                    // Autofill the input with the selected command
                     if let Some(cmd) = self.get_selected_command() {
                         self.input = cmd.command_text.clone();
                         self.cursor_position = self.input.len();
@@ -262,18 +241,13 @@ impl App {
             }
             KeyCode::Down => {
                 if !self.filtered_commands.is_empty() {
+                    let max = self.filtered_commands.len() - 1;
                     let selected = match self.list_state.selected() {
-                        Some(i) => {
-                            if i < self.filtered_commands.len() - 1 {
-                                i + 1
-                            } else {
-                                i
-                            }
-                        }
+                        Some(i) if i < max => i + 1,
+                        Some(i) => i,
                         None => 0,
                     };
                     self.list_state.select(Some(selected));
-                    // Autofill the input with the selected command
                     if let Some(cmd) = self.get_selected_command() {
                         self.input = cmd.command_text.clone();
                         self.cursor_position = self.input.len();
@@ -298,12 +272,10 @@ impl App {
                     self.status_message = "Alias name cannot be empty".to_string();
                     return None;
                 }
-                
                 if let Some(command) = &self.selected_command {
-                    // Store the alias and command for confirmation
                     self.confirmation_alias = Some(alias.clone());
                     self.confirmation_command = Some(command.clone());
-                    self.confirmation_selection = true; // Default to OK selected
+                    self.confirmation_selection = true;
                     self.status_message = format!("Confirm adding alias: {} = {} (OK/Undo)", alias, command);
                     self.set_mode(AppMode::AddAliasConfirmation);
                     None
@@ -312,11 +284,7 @@ impl App {
                     None
                 }
             }
-            KeyCode::Char(c) => {
-                self.alias_input.insert(self.alias_cursor_position, c);
-                self.alias_cursor_position += 1;
-                None
-            }
+            KeyCode::Char(c) => { self.alias_input.insert(self.alias_cursor_position, c); self.alias_cursor_position += 1; None }
             KeyCode::Backspace => {
                 if self.alias_cursor_position > 0 {
                     self.alias_input.remove(self.alias_cursor_position - 1);
@@ -324,34 +292,17 @@ impl App {
                 }
                 None
             }
-            KeyCode::Left => {
-                if self.alias_cursor_position > 0 {
-                    self.alias_cursor_position -= 1;
-                }
-                None
-            }
-            KeyCode::Right => {
-                if self.alias_cursor_position < self.alias_input.len() {
-                    self.alias_cursor_position += 1;
-                }
-                None
-            }
+            KeyCode::Left => { if self.alias_cursor_position > 0 { self.alias_cursor_position -= 1; } None }
+            KeyCode::Right => { if self.alias_cursor_position < self.alias_input.len() { self.alias_cursor_position += 1; } None }
             KeyCode::Up => {
                 if !self.alias_suggestions.is_empty() {
                     let selected = match self.alias_suggestions_state.selected() {
-                        Some(i) => {
-                            if i > 0 {
-                                i - 1
-                            } else {
-                                i
-                            }
-                        }
-                        None => 0,
+                        Some(i) if i > 0 => i - 1,
+                        _ => 0,
                     };
                     self.alias_suggestions_state.select(Some(selected));
-                    // Autofill the input with the selected alias
-                    if let Some(suggestion) = self.alias_suggestions.get(selected) {
-                        self.alias_input = suggestion.alias.clone();
+                    if let Some(s) = self.alias_suggestions.get(selected) {
+                        self.alias_input = s.alias.clone();
                         self.alias_cursor_position = self.alias_input.len();
                     }
                 }
@@ -359,77 +310,53 @@ impl App {
             }
             KeyCode::Down => {
                 if !self.alias_suggestions.is_empty() {
+                    let max = self.alias_suggestions.len() - 1;
                     let selected = match self.alias_suggestions_state.selected() {
-                        Some(i) => {
-                            if i < self.alias_suggestions.len() - 1 {
-                                i + 1
-                            } else {
-                                i
-                            }
-                        }
+                        Some(i) if i < max => i + 1,
+                        Some(i) => i,
                         None => 0,
                     };
                     self.alias_suggestions_state.select(Some(selected));
-                    // Autofill the input with the selected alias
-                    if let Some(suggestion) = self.alias_suggestions.get(selected) {
-                        self.alias_input = suggestion.alias.clone();
+                    if let Some(s) = self.alias_suggestions.get(selected) {
+                        self.alias_input = s.alias.clone();
                         self.alias_cursor_position = self.alias_input.len();
                     }
                 }
                 None
             }
             KeyCode::Tab => {
-                if let Some(suggestion) = self.alias_suggestions.get(0) {
-                    self.alias_input = suggestion.alias.clone();
+                if let Some(s) = self.alias_suggestions.first() {
+                    self.alias_input = s.alias.clone();
                     self.alias_cursor_position = self.alias_input.len();
                 }
                 None
             }
-            KeyCode::Esc => {
-                self.set_mode(AppMode::Main);
-                self.status_message = "Add alias cancelled.".to_string();
-                None
-            }
+            KeyCode::Esc => { self.set_mode(AppMode::Main); self.status_message = "Add alias cancelled.".to_string(); None }
             _ => None,
         }
     }
 
     fn handle_add_alias_confirmation(&mut self, key: KeyCode) -> Option<Operation> {
         match key {
-            KeyCode::Left => {
-                self.confirmation_selection = true; // Select OK
-                None
-            }
-            KeyCode::Right => {
-                self.confirmation_selection = false; // Select Undo
-                None
-            }
+            KeyCode::Left => { self.confirmation_selection = true; None }
+            KeyCode::Right => { self.confirmation_selection = false; None }
             KeyCode::Enter => {
                 if self.confirmation_selection {
-                    // OK pressed - check if this is a change operation
                     if let (Some(alias), Some(command)) = (&self.confirmation_alias, &self.confirmation_command) {
                         if let Some(old_alias) = &self.change_old_alias {
-                            // This is a change operation
                             let old_alias_str = old_alias.clone();
                             let new_alias_str = alias.to_string();
                             let command_str = command.to_string();
-                            self.status_message = format!("Changed alias: {} = {} → {} = {}", 
+                            self.status_message = format!("Changed alias: {} = {} → {} = {}",
                                 old_alias_str, command_str, new_alias_str, command_str);
                             self.set_mode(AppMode::Main);
-                            Some(Operation::Change { 
-                                old_alias: old_alias_str, 
-                                new_alias: new_alias_str
-                            })
+                            Some(Operation::Change { old_alias: old_alias_str, new_alias: new_alias_str })
                         } else {
-                            // This is an add operation
                             let alias_str = alias.to_string();
                             let command_str = command.to_string();
                             self.status_message = format!("Added alias: {} = {}", alias_str, command_str);
                             self.set_mode(AppMode::Main);
-                            Some(Operation::Add { 
-                                alias: alias_str, 
-                                command: command_str
-                            })
+                            Some(Operation::Add { alias: alias_str, command: command_str })
                         }
                     } else {
                         self.status_message = "No alias or command selected".to_string();
@@ -437,22 +364,17 @@ impl App {
                         None
                     }
                 } else {
-                    // Undo pressed - just don't add/change the alias
                     if let (Some(alias), Some(command)) = (&self.confirmation_alias, &self.confirmation_command) {
                         if self.change_old_alias.is_some() {
-                            // This was a change operation
                             self.status_message = format!("Cancelled changing alias: {} = {}", alias, command);
                         } else {
-                            // This was an add operation
                             self.status_message = format!("Cancelled adding alias: {} = {}", alias, command);
                         }
-                        self.set_mode(AppMode::Main);
-                        None
                     } else {
                         self.status_message = "No alias to cancel".to_string();
-                        self.set_mode(AppMode::Main);
-                        None
                     }
+                    self.set_mode(AppMode::Main);
+                    None
                 }
             }
             KeyCode::Esc => {
@@ -481,8 +403,9 @@ impl App {
                 };
                 self.remove_confirmation_alias = Some(alias_text);
                 self.remove_confirmation_command = Some(command_text);
-                self.remove_confirmation_selection = true; // OK selected by default
-                self.status_message = format!("Confirm removing alias: {} (OK/Undo)", self.remove_confirmation_alias.as_deref().unwrap_or(""));
+                self.remove_confirmation_selection = true;
+                self.status_message = format!("Confirm removing alias: {} (OK/Undo)",
+                    self.remove_confirmation_alias.as_deref().unwrap_or(""));
                 self.set_mode(AppMode::RemoveAliasConfirmation);
                 None
             }
@@ -500,32 +423,16 @@ impl App {
                 }
                 None
             }
-            KeyCode::Left => {
-                if self.cursor_position > 0 {
-                    self.cursor_position -= 1;
-                }
-                None
-            }
-            KeyCode::Right => {
-                if self.cursor_position < self.input.len() {
-                    self.cursor_position += 1;
-                }
-                None
-            }
+            KeyCode::Left => { if self.cursor_position > 0 { self.cursor_position -= 1; } None }
+            KeyCode::Right => { if self.cursor_position < self.input.len() { self.cursor_position += 1; } None }
             KeyCode::Up => {
                 if !self.filtered_aliases.is_empty() {
-                    let selected = match self.list_state.selected() {
-                        Some(i) => {
-                            if i > 0 {
-                                i - 1
-                            } else {
-                                i
-                            }
-                        }
-                        None => 0,
+                    let selected = match self.alias_list_state.selected() {
+                        Some(i) if i > 0 => i - 1,
+                        _ => 0,
                     };
-                    self.list_state.select(Some(selected));
-                    // Autofill the input with the selected alias
+                    let clamped = selected.min(self.filtered_aliases.len() - 1);
+                    self.alias_list_state.select(Some(clamped));
                     if let Some((alias, _)) = self.get_selected_alias() {
                         self.input = alias.clone();
                         self.cursor_position = self.input.len();
@@ -535,18 +442,13 @@ impl App {
             }
             KeyCode::Down => {
                 if !self.filtered_aliases.is_empty() {
-                    let selected = match self.list_state.selected() {
-                        Some(i) => {
-                            if i < self.filtered_aliases.len() - 1 {
-                                i + 1
-                            } else {
-                                i
-                            }
-                        }
+                    let max = self.filtered_aliases.len() - 1;
+                    let selected = match self.alias_list_state.selected() {
+                        Some(i) if i < max => i + 1,
+                        Some(i) => i,
                         None => 0,
                     };
-                    self.list_state.select(Some(selected));
-                    // Autofill the input with the selected alias
+                    self.alias_list_state.select(Some(selected));
                     if let Some((alias, _)) = self.get_selected_alias() {
                         self.input = alias.clone();
                         self.cursor_position = self.input.len();
@@ -554,28 +456,17 @@ impl App {
                 }
                 None
             }
-            KeyCode::Esc => {
-                self.set_mode(AppMode::Main);
-                self.status_message = "Remove alias cancelled.".to_string();
-                None
-            }
+            KeyCode::Esc => { self.set_mode(AppMode::Main); self.status_message = "Remove alias cancelled.".to_string(); None }
             _ => None,
         }
     }
 
     fn handle_remove_alias_confirmation(&mut self, key: KeyCode) -> Option<Operation> {
         match key {
-            KeyCode::Left => {
-                self.remove_confirmation_selection = true; // OK
-                None
-            }
-            KeyCode::Right => {
-                self.remove_confirmation_selection = false; // Undo
-                None
-            }
+            KeyCode::Left => { self.remove_confirmation_selection = true; None }
+            KeyCode::Right => { self.remove_confirmation_selection = false; None }
             KeyCode::Enter => {
                 if self.remove_confirmation_selection {
-                    // OK pressed - remove the alias
                     if let Some(alias) = &self.remove_confirmation_alias {
                         let alias_str = alias.clone();
                         self.status_message = format!("Removed alias: {}", alias_str);
@@ -587,7 +478,6 @@ impl App {
                         None
                     }
                 } else {
-                    // Undo pressed - do nothing
                     if let Some(alias) = &self.remove_confirmation_alias {
                         self.status_message = format!("Cancelled removing alias: {}", alias);
                     } else {
@@ -597,11 +487,7 @@ impl App {
                     None
                 }
             }
-            KeyCode::Esc => {
-                self.set_mode(AppMode::Main);
-                self.status_message = "Remove alias cancelled.".to_string();
-                None
-            }
+            KeyCode::Esc => { self.set_mode(AppMode::Main); self.status_message = "Remove alias cancelled.".to_string(); None }
             _ => None,
         }
     }
@@ -620,9 +506,8 @@ impl App {
                     self.generate_change_alias_suggestions();
                     self.status_message = "Enter new alias name:".to_string();
                 } else if !self.input.trim().is_empty() {
-                    // Try to find alias by name
-                    let search_alias = self.input.trim();
-                    if let Some((alias, command)) = self.aliases.iter().find(|(a, _)| a == search_alias) {
+                    let search_alias = self.input.trim().to_string();
+                    if let Some((alias, command)) = self.aliases.iter().find(|(a, _)| a == &search_alias) {
                         self.change_old_alias = Some(alias.clone());
                         self.change_old_command = Some(command.clone());
                         self.change_new_alias.clear();
@@ -652,55 +537,32 @@ impl App {
                 }
                 None
             }
-            KeyCode::Left => {
-                if self.cursor_position > 0 {
-                    self.cursor_position -= 1;
-                }
-                None
-            }
-            KeyCode::Right => {
-                if self.cursor_position < self.input.len() {
-                    self.cursor_position += 1;
-                }
-                None
-            }
+            KeyCode::Left => { if self.cursor_position > 0 { self.cursor_position -= 1; } None }
+            KeyCode::Right => { if self.cursor_position < self.input.len() { self.cursor_position += 1; } None }
             KeyCode::Up => {
                 if !self.filtered_aliases.is_empty() {
-                    let selected = match self.list_state.selected() {
-                        Some(i) => {
-                            if i > 0 {
-                                i - 1
-                            } else {
-                                i
-                            }
-                        }
-                        None => 0,
+                    let selected = match self.alias_list_state.selected() {
+                        Some(i) if i > 0 => i - 1,
+                        _ => 0,
                     };
-                    self.list_state.select(Some(selected));
+                    let clamped = selected.min(self.filtered_aliases.len() - 1);
+                    self.alias_list_state.select(Some(clamped));
                 }
                 None
             }
             KeyCode::Down => {
                 if !self.filtered_aliases.is_empty() {
-                    let selected = match self.list_state.selected() {
-                        Some(i) => {
-                            if i < self.filtered_aliases.len() - 1 {
-                                i + 1
-                            } else {
-                                i
-                            }
-                        }
+                    let max = self.filtered_aliases.len() - 1;
+                    let selected = match self.alias_list_state.selected() {
+                        Some(i) if i < max => i + 1,
+                        Some(i) => i,
                         None => 0,
                     };
-                    self.list_state.select(Some(selected));
+                    self.alias_list_state.select(Some(selected));
                 }
                 None
             }
-            KeyCode::Esc => {
-                self.set_mode(AppMode::Main);
-                self.status_message = "Change alias cancelled.".to_string();
-                None
-            }
+            KeyCode::Esc => { self.set_mode(AppMode::Main); self.status_message = "Change alias cancelled.".to_string(); None }
             _ => None,
         }
     }
@@ -713,13 +575,11 @@ impl App {
                     self.status_message = "New alias name cannot be empty".to_string();
                     return None;
                 }
-                
                 if let (Some(old_alias), Some(old_command)) = (&self.change_old_alias, &self.change_old_command) {
-                    // Store the old and new alias for confirmation
                     self.confirmation_alias = Some(new_alias.clone());
                     self.confirmation_command = Some(old_command.clone());
-                    self.confirmation_selection = true; // Default to OK selected
-                    self.status_message = format!("Confirm changing alias: {} = {} → {} = {} (OK/Undo)", 
+                    self.confirmation_selection = true;
+                    self.status_message = format!("Confirm changing alias: {} = {} → {} = {} (OK/Undo)",
                         old_alias, old_command, new_alias, old_command);
                     self.set_mode(AppMode::AddAliasConfirmation);
                     None
@@ -728,11 +588,7 @@ impl App {
                     None
                 }
             }
-            KeyCode::Char(c) => {
-                self.change_new_alias.insert(self.change_new_alias_cursor_position, c);
-                self.change_new_alias_cursor_position += 1;
-                None
-            }
+            KeyCode::Char(c) => { self.change_new_alias.insert(self.change_new_alias_cursor_position, c); self.change_new_alias_cursor_position += 1; None }
             KeyCode::Backspace => {
                 if self.change_new_alias_cursor_position > 0 {
                     self.change_new_alias.remove(self.change_new_alias_cursor_position - 1);
@@ -740,34 +596,17 @@ impl App {
                 }
                 None
             }
-            KeyCode::Left => {
-                if self.change_new_alias_cursor_position > 0 {
-                    self.change_new_alias_cursor_position -= 1;
-                }
-                None
-            }
-            KeyCode::Right => {
-                if self.change_new_alias_cursor_position < self.change_new_alias.len() {
-                    self.change_new_alias_cursor_position += 1;
-                }
-                None
-            }
+            KeyCode::Left => { if self.change_new_alias_cursor_position > 0 { self.change_new_alias_cursor_position -= 1; } None }
+            KeyCode::Right => { if self.change_new_alias_cursor_position < self.change_new_alias.len() { self.change_new_alias_cursor_position += 1; } None }
             KeyCode::Up => {
                 if !self.change_alias_suggestions.is_empty() {
                     let selected = match self.change_alias_suggestions_state.selected() {
-                        Some(i) => {
-                            if i > 0 {
-                                i - 1
-                            } else {
-                                i
-                            }
-                        }
-                        None => 0,
+                        Some(i) if i > 0 => i - 1,
+                        _ => 0,
                     };
                     self.change_alias_suggestions_state.select(Some(selected));
-                    // Autofill the input with the selected alias
-                    if let Some(suggestion) = self.change_alias_suggestions.get(selected) {
-                        self.change_new_alias = suggestion.alias.clone();
+                    if let Some(s) = self.change_alias_suggestions.get(selected) {
+                        self.change_new_alias = s.alias.clone();
                         self.change_new_alias_cursor_position = self.change_new_alias.len();
                     }
                 }
@@ -775,37 +614,28 @@ impl App {
             }
             KeyCode::Down => {
                 if !self.change_alias_suggestions.is_empty() {
+                    let max = self.change_alias_suggestions.len() - 1;
                     let selected = match self.change_alias_suggestions_state.selected() {
-                        Some(i) => {
-                            if i < self.change_alias_suggestions.len() - 1 {
-                                i + 1
-                            } else {
-                                i
-                            }
-                        }
+                        Some(i) if i < max => i + 1,
+                        Some(i) => i,
                         None => 0,
                     };
                     self.change_alias_suggestions_state.select(Some(selected));
-                    // Autofill the input with the selected alias
-                    if let Some(suggestion) = self.change_alias_suggestions.get(selected) {
-                        self.change_new_alias = suggestion.alias.clone();
+                    if let Some(s) = self.change_alias_suggestions.get(selected) {
+                        self.change_new_alias = s.alias.clone();
                         self.change_new_alias_cursor_position = self.change_new_alias.len();
                     }
                 }
                 None
             }
             KeyCode::Tab => {
-                if let Some(suggestion) = self.change_alias_suggestions.get(0) {
-                    self.change_new_alias = suggestion.alias.clone();
+                if let Some(s) = self.change_alias_suggestions.first() {
+                    self.change_new_alias = s.alias.clone();
                     self.change_new_alias_cursor_position = self.change_new_alias.len();
                 }
                 None
             }
-            KeyCode::Esc => {
-                self.set_mode(AppMode::Main);
-                self.status_message = "Change alias cancelled.".to_string();
-                None
-            }
+            KeyCode::Esc => { self.set_mode(AppMode::Main); self.status_message = "Change alias cancelled.".to_string(); None }
             _ => None,
         }
     }
@@ -815,14 +645,8 @@ impl App {
             KeyCode::Up => {
                 if !self.aliases.is_empty() {
                     let selected = match self.list_aliases_state.selected() {
-                        Some(i) => {
-                            if i > 0 {
-                                i - 1
-                            } else {
-                                i
-                            }
-                        }
-                        None => 0,
+                        Some(i) if i > 0 => i - 1,
+                        _ => 0,
                     };
                     self.list_aliases_state.select(Some(selected));
                 }
@@ -830,14 +654,10 @@ impl App {
             }
             KeyCode::Down => {
                 if !self.aliases.is_empty() {
+                    let max = self.aliases.len() - 1;
                     let selected = match self.list_aliases_state.selected() {
-                        Some(i) => {
-                            if i < self.aliases.len() - 1 {
-                                i + 1
-                            } else {
-                                i
-                            }
-                        }
+                        Some(i) if i < max => i + 1,
+                        Some(i) => i,
                         None => 0,
                     };
                     self.list_aliases_state.select(Some(selected));
@@ -845,7 +665,6 @@ impl App {
                 None
             }
             KeyCode::Enter => {
-                // Show details of selected alias
                 if let Some(selected) = self.list_aliases_state.selected() {
                     if let Some((alias, command)) = self.aliases.get(selected) {
                         self.show_popup(format!("Alias: {} = {}", alias, command));
@@ -853,11 +672,7 @@ impl App {
                 }
                 None
             }
-            KeyCode::Esc => {
-                self.set_mode(AppMode::Main);
-                self.status_message = "Returned to main menu.".to_string();
-                None
-            }
+            KeyCode::Esc => { self.set_mode(AppMode::Main); self.status_message = "Returned to main menu.".to_string(); None }
             _ => None,
         }
     }

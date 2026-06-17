@@ -6,19 +6,19 @@ mod shell;
 
 use cli::arg_handler::parse_args;
 use cli::cli_data::Operation;
-use database::db::{get_db_path, open};
+use database::db::{get_db_path, open, open_for_write};
+use database::history_loader::compact;
 use database::persistence::{
     ensure_config_directory, ensure_data_directory, get_default_alias_file_path,
     load_config, save_config, AppConfig,
 };
 use ops::apply::{apply_add, apply_change, apply_remove, ApplyOutcome};
+use ops::alias_suggestions::is_system_command;
 use ops::delete_suggestion::delete_suggestion;
 use ops::get_suggestions;
 use ops::insert_command::insert_command;
 use shell::{render_shell_init, ShellOpts};
-use std::env;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use tui::run_tui;
 use colored::*;
@@ -40,25 +40,6 @@ fn to_absolute_path(path: &str) -> String {
             pb.to_string_lossy().to_string()
         }
     }
-}
-
-fn is_system_command(cmd: &str) -> bool {
-    if cmd.is_empty() {
-        return false;
-    }
-    if let Ok(paths) = env::var("PATH") {
-        for path in paths.split(':') {
-            let full_path = Path::new(path).join(cmd);
-            if full_path.exists()
-                && fs::metadata(&full_path)
-                    .map(|m| m.is_file() && (m.permissions().mode() & 0o111 != 0))
-                    .unwrap_or(false)
-            {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 fn print_source_message() {
@@ -113,7 +94,7 @@ fn main() {
         .map(|c| c.alias_file_paths.clone())
         .unwrap_or_else(|| vec![get_default_alias_file_path()]);
 
-    // Fast path: `custom` opens the DB but skips full CLI parse.
+    // Fast path: `custom` uses the lightweight write-only open (no UDF, no migration).
     if args.len() > 1 && args[1] == "custom" {
         if args.len() < 3 {
             eprintln!("Usage: {} custom <command> [--cwd <dir>] [--session <id>]", args[0]);
@@ -126,24 +107,15 @@ fn main() {
         let mut i = 2;
         while i < args.len() {
             match args[i].as_str() {
-                "--session" if i + 1 < args.len() => {
-                    session_id = Some(args[i + 1].clone());
-                    i += 2;
-                }
-                "--cwd" if i + 1 < args.len() => {
-                    cwd = Some(args[i + 1].clone());
-                    i += 2;
-                }
-                _ => {
-                    cmd_parts.push(&args[i]);
-                    i += 1;
-                }
+                "--session" if i + 1 < args.len() => { session_id = Some(args[i + 1].clone()); i += 2; }
+                "--cwd" if i + 1 < args.len() => { cwd = Some(args[i + 1].clone()); i += 2; }
+                _ => { cmd_parts.push(&args[i]); i += 1; }
             }
         }
         let command = cmd_parts.join(" ");
 
         let db_path = get_db_path();
-        let conn = match open(&db_path) {
+        let conn = match open_for_write(&db_path) {
             Ok(c) => c,
             Err(e) => { eprintln!("alman: DB error: {e}"); return; }
         };
@@ -205,16 +177,19 @@ fn main() {
     match cli.operation.as_ref().unwrap() {
         Operation::Add { alias, command } => {
             let Some(conn) = open_conn() else { return; };
-            apply_add(&conn, &alias_file_paths, alias, command);
-            print_source_message();
+            match apply_add(&conn, &alias_file_paths, alias, command) {
+                Ok(_) => print_source_message(),
+                Err(e) => eprintln!("{}", format!("Error adding alias: {}", e).red()),
+            }
         }
         Operation::Remove { alias } => {
             let Some(conn) = open_conn() else { return; };
             match apply_remove(&conn, &alias_file_paths, alias) {
-                ApplyOutcome::NotFound { alias } => {
+                Ok(ApplyOutcome::NotFound { alias }) => {
                     eprintln!("{}", format!("Alias '{}' not found.", alias).red());
                 }
-                _ => print_source_message(),
+                Ok(_) => print_source_message(),
+                Err(e) => eprintln!("{}", format!("Error removing alias: {}", e).red()),
             }
         }
         Operation::List => {
@@ -241,10 +216,11 @@ fn main() {
         Operation::Change { old_alias, new_alias } => {
             let Some(conn) = open_conn() else { return; };
             match apply_change(&conn, &alias_file_paths, old_alias, new_alias) {
-                ApplyOutcome::NotFound { alias } => {
+                Ok(ApplyOutcome::NotFound { alias }) => {
                     eprintln!("{}", format!("Alias '{}' not found.", alias).red());
                 }
-                _ => print_source_message(),
+                Ok(_) => print_source_message(),
+                Err(e) => eprintln!("{}", format!("Error changing alias: {}", e).red()),
             }
         }
         Operation::GetSuggestions { num } => {
@@ -325,11 +301,12 @@ fn main() {
                     alias_file_paths: vec![get_default_alias_file_path()],
                 });
             }
-            // Opening the DB creates the schema and runs migration if needed.
-            if let Err(e) = open(&get_db_path()) {
-                eprintln!("Failed to initialize database: {}", e);
-                return;
-            }
+            // Opening the DB creates the schema, runs migration, and seeds from history if new.
+            let conn = match open(&get_db_path()) {
+                Ok(c) => c,
+                Err(e) => { eprintln!("Failed to initialize database: {}", e); return; }
+            };
+            compact(&conn);
             let default_alias_path = get_default_alias_file_path();
             if !Path::new(&default_alias_path).exists() {
                 if let Some(parent) = Path::new(&default_alias_path).parent() {

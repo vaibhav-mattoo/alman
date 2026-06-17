@@ -1,4 +1,5 @@
 use crate::cli::cli_data::Operation;
+use crate::database::history_loader::compact;
 use crate::database::persistence::ensure_data_directory;
 use crate::ops::apply::{apply_add, apply_change, apply_remove, ApplyOutcome};
 use crate::ops::delete_suggestion;
@@ -30,6 +31,8 @@ pub fn run_tui(
         eprintln!("Failed to create config directory: {}", e);
         return Err(e);
     }
+
+    compact(&conn);
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -85,7 +88,7 @@ fn run_app<B: Backend>(
 
         if let Event::Key(key) = event::read()? {
             if key.kind == KeyEventKind::Press {
-                if let Some(operation) = app.handle_key_event(key.code) {
+                if let Some(operation) = app.handle_key_event(key.code, conn) {
                     handle_operation(operation, app, conn);
                 }
             }
@@ -101,32 +104,45 @@ fn run_app<B: Backend>(
 fn handle_operation(operation: Operation, app: &mut App, conn: &Connection) {
     match operation {
         Operation::Add { alias, command } => {
-            apply_add(conn, &app.alias_file_paths, &alias, &command);
-            app.status_message = format!("Added alias: {} = {}", alias, command);
-            app.load_commands(conn);
-            app.config_changed = true;
+            match apply_add(conn, &app.alias_file_paths, &alias, &command) {
+                Ok(ApplyOutcome::Added { alias, command }) => {
+                    app.status_message = format!("Added alias: {} = {}", alias, command);
+                    app.load_commands(conn);
+                }
+                Ok(ApplyOutcome::NotFound { alias }) => {
+                    app.status_message = format!("Alias '{}' not found.", alias);
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    app.status_message = format!("Error adding alias: {}", e);
+                }
+            }
         }
         Operation::Remove { alias } => {
             match apply_remove(conn, &app.alias_file_paths, &alias) {
-                ApplyOutcome::NotFound { .. } => {
+                Ok(ApplyOutcome::NotFound { .. }) => {
                     app.status_message = format!("Alias '{}' not found.", alias);
                 }
-                _ => {
+                Ok(_) => {
                     app.status_message = format!("Removed alias: {}", alias);
                     app.load_commands(conn);
-                    app.config_changed = true;
+                }
+                Err(e) => {
+                    app.status_message = format!("Error removing alias: {}", e);
                 }
             }
         }
         Operation::Change { old_alias, new_alias } => {
             match apply_change(conn, &app.alias_file_paths, &old_alias, &new_alias) {
-                ApplyOutcome::NotFound { .. } => {
+                Ok(ApplyOutcome::NotFound { .. }) => {
                     app.status_message = format!("Alias '{}' not found.", old_alias);
                 }
-                _ => {
+                Ok(_) => {
                     app.status_message = format!("Changed alias: {} -> {}", old_alias, new_alias);
                     app.load_commands(conn);
-                    app.config_changed = true;
+                }
+                Err(e) => {
+                    app.status_message = format!("Error changing alias: {}", e);
                 }
             }
         }

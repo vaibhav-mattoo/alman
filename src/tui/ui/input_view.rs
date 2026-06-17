@@ -217,7 +217,7 @@ fn render_remove_alias_step1(f: &mut Frame, app: &App, area: ratatui::layout::Re
             .highlight_style(Style::default().bg(Color::DarkGray))
             .highlight_symbol(">> ");
 
-        f.render_stateful_widget(aliases_list, chunks[2], &mut app.list_state.clone());
+        f.render_stateful_widget(aliases_list, chunks[2], &mut app.alias_list_state.clone());
     }
 }
 
@@ -314,7 +314,7 @@ fn render_change_alias_step1(f: &mut Frame, app: &App, area: ratatui::layout::Re
             .highlight_style(Style::default().bg(Color::DarkGray))
             .highlight_symbol(">> ");
 
-        f.render_stateful_widget(aliases_list, chunks[2], &mut app.list_state.clone());
+        f.render_stateful_widget(aliases_list, chunks[2], &mut app.alias_list_state.clone());
     }
 }
 

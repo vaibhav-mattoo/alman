@@ -4,7 +4,8 @@ use crate::ops::alias_ops::{
 };
 use rusqlite::Connection;
 
-#[allow(dead_code)]
+pub type AlmanError = Box<dyn std::error::Error>;
+
 pub enum ApplyOutcome {
     Added { alias: String, command: String },
     Removed { alias: String },
@@ -13,28 +14,27 @@ pub enum ApplyOutcome {
 }
 
 /// Insert OR IGNORE into `dismissed`, then delete from `command_stats`.
-fn dismiss_command(conn: &Connection, cmd: &str) {
-    let tx = match conn.unchecked_transaction() {
-        Ok(t) => t,
-        Err(e) => { eprintln!("alman: DB error: {e}"); return; }
-    };
-    let _ = tx.execute(
+fn dismiss_command(conn: &Connection, cmd: &str) -> Result<(), AlmanError> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
         "INSERT OR IGNORE INTO dismissed (command_text) VALUES (?1)",
         rusqlite::params![cmd],
-    );
-    let _ = tx.execute(
+    )?;
+    tx.execute(
         "DELETE FROM command_stats WHERE command_text = ?1",
         rusqlite::params![cmd],
-    );
-    let _ = tx.commit();
+    )?;
+    tx.commit()?;
+    Ok(())
 }
 
 /// Remove from `dismissed` so the command can be suggested again.
-fn undismiss_command(conn: &Connection, cmd: &str) {
-    let _ = conn.execute(
+fn undismiss_command(conn: &Connection, cmd: &str) -> Result<(), AlmanError> {
+    conn.execute(
         "DELETE FROM dismissed WHERE command_text = ?1",
         rusqlite::params![cmd],
-    );
+    )?;
+    Ok(())
 }
 
 /// Add an alias across all files and dismiss its command from suggestions.
@@ -43,13 +43,13 @@ pub fn apply_add(
     paths: &[String],
     alias: &str,
     command: &str,
-) -> ApplyOutcome {
-    add_alias_to_multiple_files(paths, alias, command);
-    dismiss_command(conn, command);
-    ApplyOutcome::Added {
+) -> Result<ApplyOutcome, AlmanError> {
+    add_alias_to_multiple_files(paths, alias, command)?;
+    dismiss_command(conn, command)?;
+    Ok(ApplyOutcome::Added {
         alias: alias.to_string(),
         command: command.to_string(),
-    }
+    })
 }
 
 /// Remove an alias from all files and un-dismiss its command.
@@ -60,14 +60,14 @@ pub fn apply_remove(
     conn: &Connection,
     paths: &[String],
     alias: &str,
-) -> ApplyOutcome {
+) -> Result<ApplyOutcome, AlmanError> {
     let all = get_aliases_from_multiple_files(paths);
     let Some((_, command)) = all.into_iter().find(|(a, _)| a == alias) else {
-        return ApplyOutcome::NotFound { alias: alias.to_string() };
+        return Ok(ApplyOutcome::NotFound { alias: alias.to_string() });
     };
-    remove_alias_from_multiple_files(paths, alias);
-    undismiss_command(conn, &command);
-    ApplyOutcome::Removed { alias: alias.to_string() }
+    remove_alias_from_multiple_files(paths, alias)?;
+    undismiss_command(conn, &command)?;
+    Ok(ApplyOutcome::Removed { alias: alias.to_string() })
 }
 
 /// Rename an alias: remove old, add new, keep the command dismissed.
@@ -79,21 +79,21 @@ pub fn apply_change(
     paths: &[String],
     old_alias: &str,
     new_alias: &str,
-) -> ApplyOutcome {
+) -> Result<ApplyOutcome, AlmanError> {
     let all = get_aliases_from_multiple_files(paths);
     let Some((_, command)) = all.into_iter().find(|(a, _)| a == old_alias) else {
-        return ApplyOutcome::NotFound { alias: old_alias.to_string() };
+        return Ok(ApplyOutcome::NotFound { alias: old_alias.to_string() });
     };
-    remove_alias_from_multiple_files(paths, old_alias);
+    remove_alias_from_multiple_files(paths, old_alias)?;
     // Briefly un-dismiss so force-add goes through cleanly, then re-dismiss.
-    undismiss_command(conn, &command);
-    add_alias_to_multiple_files_force(paths, new_alias, &command);
-    dismiss_command(conn, &command);
-    ApplyOutcome::Changed {
+    undismiss_command(conn, &command)?;
+    add_alias_to_multiple_files_force(paths, new_alias, &command)?;
+    dismiss_command(conn, &command)?;
+    Ok(ApplyOutcome::Changed {
         old_alias: old_alias.to_string(),
         new_alias: new_alias.to_string(),
         command,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -115,10 +115,8 @@ mod tests {
         let path = tmp.path().to_string_lossy().to_string();
         let conn = open_mem();
 
-        // Set up: alias ga='git add -A' and dismiss the command.
-        apply_add(&conn, &paths(&path), "ga", "git add -A");
+        apply_add(&conn, &paths(&path), "ga", "git add -A").unwrap();
 
-        // Sanity: command should be dismissed now.
         let dismissed: bool = conn
             .query_row(
                 "SELECT 1 FROM dismissed WHERE command_text = 'git add -A'",
@@ -128,8 +126,7 @@ mod tests {
             .unwrap_or(false);
         assert!(dismissed, "command not dismissed after apply_add");
 
-        // Now remove the alias — the command should be un-dismissed.
-        apply_remove(&conn, &paths(&path), "ga");
+        apply_remove(&conn, &paths(&path), "ga").unwrap();
 
         let still_dismissed: bool = conn
             .query_row(
@@ -146,7 +143,7 @@ mod tests {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let path = tmp.path().to_string_lossy().to_string();
         let conn = open_mem();
-        let outcome = apply_remove(&conn, &paths(&path), "nonexistent");
+        let outcome = apply_remove(&conn, &paths(&path), "nonexistent").unwrap();
         assert!(matches!(outcome, ApplyOutcome::NotFound { .. }));
     }
 
@@ -156,15 +153,13 @@ mod tests {
         let path = tmp.path().to_string_lossy().to_string();
         let conn = open_mem();
 
-        apply_add(&conn, &paths(&path), "ga", "git add -A");
-        apply_change(&conn, &paths(&path), "ga", "gaa");
+        apply_add(&conn, &paths(&path), "ga", "git add -A").unwrap();
+        apply_change(&conn, &paths(&path), "ga", "gaa").unwrap();
 
-        // New alias present, old alias gone from file.
         let aliases = get_aliases_from_multiple_files(&paths(&path));
         assert!(aliases.iter().any(|(a, _)| a == "gaa"), "new alias missing");
         assert!(!aliases.iter().any(|(a, _)| a == "ga"), "old alias still present");
 
-        // Command still dismissed under the new alias.
         let dismissed: bool = conn
             .query_row(
                 "SELECT 1 FROM dismissed WHERE command_text = 'git add -A'",
@@ -173,5 +168,14 @@ mod tests {
             )
             .unwrap_or(false);
         assert!(dismissed, "command should still be dismissed after change");
+    }
+
+    #[test]
+    fn add_error_propagates_not_silenced() {
+        let conn = open_mem();
+        // Pass a path in a nonexistent directory — should return Err, not panic.
+        let bad_paths = vec!["/nonexistent/dir/aliases".to_string()];
+        let result = apply_add(&conn, &bad_paths, "gs", "git status");
+        assert!(result.is_err(), "expected Err on bad path");
     }
 }

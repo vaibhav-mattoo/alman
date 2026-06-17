@@ -23,6 +23,42 @@ pub fn get_db_path() -> String {
         .to_string()
 }
 
+/// Lightweight open for the `custom` hot-write path.
+/// Sets pragmas and ensures the schema exists. No UDF, no migration, no bootstrap.
+pub fn open_for_write(path: &str) -> Result<Connection> {
+    let conn = Connection::open(path)?;
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL;
+         PRAGMA synchronous=NORMAL;
+         PRAGMA busy_timeout=3000;
+         PRAGMA foreign_keys=ON;",
+    )?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS events (
+             id         INTEGER PRIMARY KEY,
+             command    TEXT    NOT NULL,
+             ts         INTEGER NOT NULL,
+             session_id TEXT,
+             cwd        TEXT,
+             exit_code  INTEGER
+         );
+         CREATE INDEX IF NOT EXISTS idx_events_session_ts ON events(session_id, ts);
+
+         CREATE TABLE IF NOT EXISTS command_stats (
+             command_text     TEXT    PRIMARY KEY,
+             frequency        INTEGER NOT NULL,
+             last_access_time INTEGER NOT NULL,
+             length           INTEGER NOT NULL
+         );
+
+         CREATE TABLE IF NOT EXISTS dismissed (
+             command_text TEXT PRIMARY KEY
+         );",
+    )?;
+    Ok(conn)
+}
+
+/// Full open: pragmas + schema + UDF + one-time migration + bootstrap on fresh DB.
 pub fn open(path: &str) -> Result<Connection> {
     let is_new = !std::path::Path::new(path).exists();
 
@@ -74,6 +110,7 @@ pub fn open(path: &str) -> Result<Connection> {
 
     if is_new {
         migrate_from_bincode(&conn);
+        crate::database::history_loader::bootstrap_from_history(&conn);
     }
 
     Ok(conn)
@@ -127,7 +164,7 @@ fn migrate_from_bincode(conn: &Connection) {
                     Ok(t) => t,
                     Err(e) => { eprintln!("  migration error (stats tx): {e}"); return; }
                 };
-                for (_, cmd) in &db.reverse_command_map {
+                for cmd in db.reverse_command_map.values() {
                     if cmd.length <= 5 && cmd.number_of_words == 1 {
                         continue;
                     }
