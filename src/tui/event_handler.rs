@@ -84,6 +84,101 @@ impl App {
             AppMode::ChangeAliasStep1 => self.handle_change_alias_step1(key),
             AppMode::ChangeAliasStep2 => self.handle_change_alias_step2(key),
             AppMode::ListAliases => self.handle_list_aliases(key),
+            AppMode::Templates => self.handle_templates(key),
+            AppMode::TemplatesNameInput => self.handle_templates_name_input(key, conn),
+        }
+    }
+
+    fn handle_templates(&mut self, key: KeyCode) -> Option<Operation> {
+        match key {
+            KeyCode::Up => {
+                if !self.mined_templates.is_empty() {
+                    let selected = match self.templates_state.selected() {
+                        Some(i) if i > 0 => i - 1,
+                        _ => 0,
+                    };
+                    self.templates_state.select(Some(selected));
+                }
+                None
+            }
+            KeyCode::Down => {
+                if !self.mined_templates.is_empty() {
+                    let max = self.mined_templates.len() - 1;
+                    let selected = match self.templates_state.selected() {
+                        Some(i) if i < max => i + 1,
+                        Some(i) => i,
+                        None => 0,
+                    };
+                    self.templates_state.select(Some(selected));
+                }
+                None
+            }
+            KeyCode::Enter => {
+                if self.get_selected_template().is_some() {
+                    self.template_name_input.clear();
+                    self.template_name_cursor_position = 0;
+                    self.mode = AppMode::TemplatesNameInput;
+                    self.status_message = "Enter a name for this template (Enter to save, Esc to cancel):".to_string();
+                } else {
+                    self.status_message = "No template selected.".to_string();
+                }
+                None
+            }
+            KeyCode::Esc => {
+                self.set_mode(AppMode::Main);
+                self.status_message = "Returned to main menu.".to_string();
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn handle_templates_name_input(&mut self, key: KeyCode, conn: &Connection) -> Option<Operation> {
+        match key {
+            KeyCode::Enter => {
+                let name = self.template_name_input.trim().to_string();
+                if name.is_empty() {
+                    self.status_message = "Name cannot be empty.".to_string();
+                    return None;
+                }
+                if let Some(mt) = self.get_selected_template() {
+                    let template = mt.template.clone();
+                    match crate::ops::apply::apply_add_function(conn, &name, &template) {
+                        Ok(_) => {
+                            self.status_message = format!("Saved template as '{}'.", name);
+                            self.load_commands(conn);
+                            self.set_mode(AppMode::Main);
+                        }
+                        Err(e) => {
+                            self.status_message = format!("Error saving template: {}", e);
+                        }
+                    }
+                } else {
+                    self.status_message = "No template selected.".to_string();
+                    self.set_mode(AppMode::Main);
+                }
+                None
+            }
+            KeyCode::Char(c) => {
+                self.template_name_input.insert(self.template_name_cursor_position, c);
+                self.template_name_cursor_position += 1;
+                None
+            }
+            KeyCode::Backspace => {
+                if self.template_name_cursor_position > 0 {
+                    self.template_name_input.remove(self.template_name_cursor_position - 1);
+                    self.template_name_cursor_position -= 1;
+                }
+                None
+            }
+            KeyCode::Left => { if self.template_name_cursor_position > 0 { self.template_name_cursor_position -= 1; } None }
+            KeyCode::Right => { if self.template_name_cursor_position < self.template_name_input.len() { self.template_name_cursor_position += 1; } None }
+            KeyCode::Esc => {
+                self.mode = AppMode::Templates;
+                self.status_message = "Cancelled.".to_string();
+                None
+            }
+            _ => None,
         }
     }
 
@@ -100,20 +195,28 @@ impl App {
             }
             KeyCode::Char('r') => {
                 self.set_mode(AppMode::RemoveAliasStep1);
+                self.load_aliases(conn);
+                self.filter_aliases();
                 self.status_message = "Select an alias to remove (type to filter, ↑↓ to navigate):".to_string();
                 None
             }
             KeyCode::Char('c') => {
                 self.set_mode(AppMode::ChangeAliasStep1);
                 self.status_message = "Select an alias to change (type to filter, ↑↓ to navigate):".to_string();
-                self.load_aliases();
+                self.load_aliases(conn);
                 self.filter_aliases();
                 None
             }
             KeyCode::Char('l') => {
                 self.set_mode(AppMode::ListAliases);
                 self.status_message = "Listing aliases (use ↑↓ to navigate, Esc to return):".to_string();
-                self.load_aliases_for_listing();
+                self.load_aliases_for_listing(conn);
+                None
+            }
+            KeyCode::Char('t') => {
+                self.set_mode(AppMode::Templates);
+                self.load_templates(conn);
+                self.status_message = "Mined templates (↑↓ to navigate, Enter to name & save, Esc to return):".to_string();
                 None
             }
             KeyCode::Up => {

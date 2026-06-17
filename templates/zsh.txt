@@ -7,10 +7,7 @@ export ALMAN_CONFIG_DIR="{{ config_dir }}"
 export ALMAN_BIN="{{ app_path }}"
 
 function __alman_source_aliases() {
-    local __alman_file
-    while IFS= read -r __alman_file; do
-        [[ -f "$__alman_file" ]] && \builtin source "$__alman_file"
-    done < <("{{ app_path }}" list-alias-files 2>/dev/null)
+    eval "$("{{ app_path }}" render-aliases zsh 2>/dev/null)"
 }
 
 function __alman_preexec() {

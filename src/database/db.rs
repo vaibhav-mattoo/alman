@@ -53,6 +53,14 @@ pub fn open_for_write(path: &str) -> Result<Connection> {
 
          CREATE TABLE IF NOT EXISTS dismissed (
              command_text TEXT PRIMARY KEY
+         );
+
+         CREATE TABLE IF NOT EXISTS definitions (
+             id            INTEGER PRIMARY KEY,
+             name          TEXT    NOT NULL UNIQUE,
+             kind          TEXT    NOT NULL,
+             template_json TEXT    NOT NULL,
+             created_at    INTEGER NOT NULL
          );",
     )?;
     Ok(conn)
@@ -91,20 +99,29 @@ pub fn open(path: &str) -> Result<Connection> {
 
          CREATE TABLE IF NOT EXISTS dismissed (
              command_text TEXT PRIMARY KEY
+         );
+
+         CREATE TABLE IF NOT EXISTS definitions (
+             id            INTEGER PRIMARY KEY,
+             name          TEXT    NOT NULL UNIQUE,
+             kind          TEXT    NOT NULL,
+             template_json TEXT    NOT NULL,
+             created_at    INTEGER NOT NULL
          );",
     )?;
 
     // alman_score(frequency, last_access_time, length, now) -> f64
+    let scorer = crate::defaults::default_relevance_scorer();
     conn.create_scalar_function(
         "alman_score",
         4,
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
-        |ctx| {
+        move |ctx| {
             let frequency: f64 = ctx.get::<i64>(0)? as f64;
             let last_access: i64 = ctx.get::<i64>(1)?;
             let length: f64 = ctx.get::<i64>(2)? as f64;
             let now: i64 = ctx.get::<i64>(3)?;
-            Ok(crate::database::scoring::score(frequency, last_access, length, now))
+            Ok(scorer.score(frequency, last_access, length, now))
         },
     )?;
 
@@ -114,6 +131,29 @@ pub fn open(path: &str) -> Result<Connection> {
     }
 
     Ok(conn)
+}
+
+/// One-time migration of existing alias files into the `definitions` table.
+/// Only runs while `definitions` is empty (idempotent).
+pub fn migrate_aliases_if_needed(conn: &Connection, alias_file_paths: &[String]) {
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM definitions", [], |r| r.get(0))
+        .unwrap_or(1);
+    if count > 0 {
+        return;
+    }
+
+    use crate::ops::alias_ops::get_aliases_from_multiple_files;
+    use crate::registry::{upsert_definition, DefinitionKind};
+    use crate::template::{CommandTemplate, TemplatePart};
+
+    let aliases = get_aliases_from_multiple_files(alias_file_paths);
+    for (name, command) in aliases {
+        let template = CommandTemplate {
+            parts: vec![TemplatePart::Literal(command)],
+        };
+        let _ = upsert_definition(conn, &name, DefinitionKind::Alias, &template);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -229,5 +269,35 @@ mod legacy {
         fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
             Some(self.cmp(other))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn migrate_aliases_is_idempotent() {
+        let conn = open(":memory:").expect("in-memory DB");
+
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        writeln!(tmp, "alias ga='git add -A'").unwrap();
+        writeln!(tmp, "alias gs='git status'").unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        let paths = vec![path];
+
+        migrate_aliases_if_needed(&conn, &paths);
+        let count1: i64 = conn
+            .query_row("SELECT COUNT(*) FROM definitions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count1, 2, "two aliases should be migrated");
+
+        // Second run must be a no-op (definitions non-empty).
+        migrate_aliases_if_needed(&conn, &paths);
+        let count2: i64 = conn
+            .query_row("SELECT COUNT(*) FROM definitions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count2, count1, "second migration must not change count");
     }
 }

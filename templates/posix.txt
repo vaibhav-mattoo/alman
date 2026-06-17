@@ -6,14 +6,9 @@ export ALMAN_DATA_DIR="{{ data_dir }}"
 export ALMAN_CONFIG_DIR="{{ config_dir }}"
 export ALMAN_BIN="{{ app_path }}"
 
-# Source each alias file printed by list-alias-files.
-# Here-doc avoids a pipe subshell so sourced aliases are visible in the parent.
+# Evaluate the alias/function definitions rendered by alman.
 __alman_source_aliases() {
-    while IFS= read -r __alman_file; do
-        [ -f "$__alman_file" ] && . "$__alman_file"
-    done <<__ALMAN_EOF
-$("{{ app_path }}" list-alias-files 2>/dev/null)
-__ALMAN_EOF
+    eval "$("{{ app_path }}" render-aliases posix 2>/dev/null)"
 }
 
 "{{ app_path }}" init-data >/dev/null 2>&1

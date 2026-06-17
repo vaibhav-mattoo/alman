@@ -39,14 +39,14 @@ pub fn query_top_commands(conn: &Connection, now: i64, limit: i64) -> Vec<Comman
 /// ordered by score, excluding dismissed entries.
 pub fn query_filtered_commands(conn: &Connection, now: i64, filter: &str, limit: i64) -> Vec<Command> {
     let sql = if filter.is_empty() {
-        "SELECT command_text, frequency, last_access_time, length,
+        "SELECT command_text, frequency, last_access_time,
                 alman_score(frequency, last_access_time, length, ?1) AS score
          FROM command_stats
          WHERE command_text NOT IN (SELECT command_text FROM dismissed)
          ORDER BY score DESC
          LIMIT ?2"
     } else {
-        "SELECT command_text, frequency, last_access_time, length,
+        "SELECT command_text, frequency, last_access_time,
                 alman_score(frequency, last_access_time, length, ?1) AS score
          FROM command_stats
          WHERE command_text NOT IN (SELECT command_text FROM dismissed)
@@ -65,8 +65,7 @@ pub fn query_filtered_commands(conn: &Connection, now: i64, filter: &str, limit:
             command_text:     row.get(0)?,
             frequency:        row.get(1)?,
             last_access_time: row.get(2)?,
-            length:           row.get(3)?,
-            score:            row.get(4)?,
+            score:            row.get(3)?,
         })
     };
 

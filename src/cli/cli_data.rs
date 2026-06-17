@@ -85,6 +85,18 @@ pub enum Operation {
     InitData,
     #[command(hide = true)]
     ListAliasFiles,
+    /// render-aliases <shell> — hidden, called from shell init
+    #[command(name = "render-aliases", hide = true)]
+    RenderAliases { shell: InitShell },
+    /// export-aliases — print POSIX alias lines for all definitions
+    #[command(name = "export-aliases")]
+    ExportAliases,
+    /// get-templates [-n N] — show mined templates
+    #[command(name = "get-templates")]
+    GetTemplates {
+        #[arg(short)]
+        num: Option<usize>,
+    },
 }
 
 #[derive(ValueEnum, Clone, Debug)]

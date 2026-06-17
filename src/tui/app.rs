@@ -4,7 +4,6 @@ use crate::ops::alias_suggestions::{AliasSuggester, AliasSuggestion};
 use crate::ops::get_suggestions::{query_filtered_commands, query_top_commands};
 use ratatui::widgets::ListState;
 use rusqlite::Connection;
-use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub enum AppMode {
@@ -17,6 +16,8 @@ pub enum AppMode {
     ChangeAliasStep1,
     ChangeAliasStep2,
     ListAliases,
+    Templates,
+    TemplatesNameInput,
 }
 
 pub struct App {
@@ -29,7 +30,6 @@ pub struct App {
     pub alias_list_state: ListState,
     pub commands: Vec<Command>,
     pub filtered_commands: Vec<Command>,
-    pub alias_file_path: PathBuf,
     pub alias_file_paths: Vec<String>,
     pub should_quit: bool,
     pub status_message: String,
@@ -60,6 +60,12 @@ pub struct App {
     pub show_command_details_popup: bool,
     /// Cached suggester — built once per TUI session on first use.
     pub suggester: Option<AliasSuggester>,
+    /// Mined command templates (Templates panel).
+    pub mined_templates: Vec<crate::mining::miner::MinedTemplate>,
+    pub templates_state: ListState,
+    /// Name being typed for a selected template.
+    pub template_name_input: String,
+    pub template_name_cursor_position: usize,
 }
 
 impl std::fmt::Debug for App {
@@ -72,7 +78,7 @@ impl std::fmt::Debug for App {
 }
 
 impl App {
-    pub fn new(alias_file_path: PathBuf, alias_file_paths: Vec<String>) -> Self {
+    pub fn new(alias_file_paths: Vec<String>) -> Self {
         let mut list_state = ListState::default();
         list_state.select(Some(0));
         let mut alias_list_state = ListState::default();
@@ -91,7 +97,6 @@ impl App {
             alias_list_state,
             commands: Vec::new(),
             filtered_commands: Vec::new(),
-            alias_file_path,
             alias_file_paths,
             should_quit: false,
             status_message: "Welcome to Alman TUI!".to_string(),
@@ -121,7 +126,53 @@ impl App {
             command_details_selection: 0,
             show_command_details_popup: false,
             suggester: None,
+            mined_templates: Vec::new(),
+            templates_state: {
+                let mut s = ListState::default();
+                s.select(Some(0));
+                s
+            },
+            template_name_input: String::new(),
+            template_name_cursor_position: 0,
         }
+    }
+
+    /// Mine command templates from recent events into `self.mined_templates`.
+    pub fn load_templates(&mut self, conn: &Connection) {
+        let tokenizer = crate::defaults::default_tokenizer();
+        let events: Vec<String> = {
+            let mut stmt = match conn
+                .prepare("SELECT command FROM events ORDER BY ts DESC LIMIT 2000")
+            {
+                Ok(s) => s,
+                Err(_) => {
+                    self.mined_templates = Vec::new();
+                    return;
+                }
+            };
+            let collected = match stmt.query_map([], |r| r.get(0)) {
+                Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+                Err(_) => Vec::new(),
+            };
+            collected
+        };
+        let tokenized: Vec<Vec<String>> = events
+            .iter()
+            .map(|e| tokenizer.tokenize(e))
+            .filter(|t| !t.is_empty())
+            .collect();
+        let miner = crate::defaults::default_miner();
+        self.mined_templates = miner.mine(&tokenized);
+        self.templates_state.select(if self.mined_templates.is_empty() {
+            None
+        } else {
+            Some(0)
+        });
+    }
+
+    pub fn get_selected_template(&self) -> Option<&crate::mining::miner::MinedTemplate> {
+        let selected = self.templates_state.selected()?;
+        self.mined_templates.get(selected)
     }
 
     pub fn load_commands(&mut self, conn: &Connection) {
@@ -203,7 +254,6 @@ impl App {
                 self.mode = mode;
             }
             AppMode::RemoveAliasStep1 => {
-                self.load_aliases();
                 self.mode = mode;
             }
             AppMode::RemoveAliasConfirmation => {
@@ -233,11 +283,21 @@ impl App {
         }
     }
 
-    pub fn load_aliases(&mut self) {
-        use crate::ops::alias_ops::get_aliases_from_multiple_files;
-        self.aliases = get_aliases_from_multiple_files(&self.alias_file_paths);
+    pub fn load_aliases(&mut self, conn: &Connection) {
+        self.aliases = Self::aliases_from_registry(conn);
         self.filtered_aliases = self.aliases.clone();
         self.alias_list_state.select(None);
+    }
+
+    /// Render registry definitions as (name, command-body) pairs for display.
+    fn aliases_from_registry(conn: &Connection) -> Vec<(String, String)> {
+        use crate::render::{PosixRenderer, ShellRenderer};
+        let renderer = PosixRenderer;
+        crate::registry::list_definitions(conn)
+            .unwrap_or_default()
+            .iter()
+            .map(|d| (d.name.clone(), renderer.render_template_body(&d.template)))
+            .collect()
     }
 
     pub fn filter_aliases(&mut self) {
@@ -279,9 +339,8 @@ impl App {
         }
     }
 
-    pub fn load_aliases_for_listing(&mut self) {
-        use crate::ops::alias_ops::get_aliases_from_multiple_files;
-        self.aliases = get_aliases_from_multiple_files(&self.alias_file_paths);
+    pub fn load_aliases_for_listing(&mut self, conn: &Connection) {
+        self.aliases = Self::aliases_from_registry(conn);
         self.list_aliases_state.select(None);
     }
 

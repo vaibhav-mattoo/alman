@@ -16,10 +16,8 @@ use ratatui::{
 };
 use rusqlite::Connection;
 use std::io;
-use std::path::PathBuf;
 
 pub fn run_tui(
-    alias_file_path: PathBuf,
     alias_file_paths: Vec<String>,
     conn: Connection,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -56,8 +54,9 @@ pub fn run_tui(
     }
 
     let mut terminal_guard = TerminalGuard { terminal };
-    let mut app = App::new(alias_file_path, alias_file_paths);
+    let mut app = App::new(alias_file_paths);
     app.load_commands(&conn);
+    crate::database::db::migrate_aliases_if_needed(&conn, &app.alias_file_paths);
 
     let res = run_app(&mut terminal_guard.terminal, &mut app, &conn);
 
@@ -104,13 +103,13 @@ fn run_app<B: Backend>(
 fn handle_operation(operation: Operation, app: &mut App, conn: &Connection) {
     match operation {
         Operation::Add { alias, command } => {
-            match apply_add(conn, &app.alias_file_paths, &alias, &command) {
-                Ok(ApplyOutcome::Added { alias, command }) => {
-                    app.status_message = format!("Added alias: {} = {}", alias, command);
+            match apply_add(conn, &alias, &command) {
+                Ok(ApplyOutcome::Added { name }) => {
+                    app.status_message = format!("Added alias: {} = {}", name, command);
                     app.load_commands(conn);
                 }
-                Ok(ApplyOutcome::NotFound { alias }) => {
-                    app.status_message = format!("Alias '{}' not found.", alias);
+                Ok(ApplyOutcome::NotFound { name }) => {
+                    app.status_message = format!("Alias '{}' not found.", name);
                 }
                 Ok(_) => {}
                 Err(e) => {
@@ -119,7 +118,7 @@ fn handle_operation(operation: Operation, app: &mut App, conn: &Connection) {
             }
         }
         Operation::Remove { alias } => {
-            match apply_remove(conn, &app.alias_file_paths, &alias) {
+            match apply_remove(conn, &alias) {
                 Ok(ApplyOutcome::NotFound { .. }) => {
                     app.status_message = format!("Alias '{}' not found.", alias);
                 }
@@ -133,7 +132,7 @@ fn handle_operation(operation: Operation, app: &mut App, conn: &Connection) {
             }
         }
         Operation::Change { old_alias, new_alias } => {
-            match apply_change(conn, &app.alias_file_paths, &old_alias, &new_alias) {
+            match apply_change(conn, &old_alias, &new_alias) {
                 Ok(ApplyOutcome::NotFound { .. }) => {
                     app.status_message = format!("Alias '{}' not found.", old_alias);
                 }
@@ -163,6 +162,11 @@ fn handle_operation(operation: Operation, app: &mut App, conn: &Connection) {
             app.status_message = "Init command not available in TUI mode".to_string();
         }
         Operation::InitData | Operation::ListAliasFiles => {
+            app.status_message = "Command not available in TUI mode".to_string();
+        }
+        Operation::RenderAliases { .. }
+        | Operation::ExportAliases
+        | Operation::GetTemplates { .. } => {
             app.status_message = "Command not available in TUI mode".to_string();
         }
     }

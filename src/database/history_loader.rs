@@ -61,12 +61,12 @@ pub fn bootstrap_from_history(conn: &Connection) {
         if cmd.is_empty() || cmd.len() <= 2 {
             continue;
         }
-        let parts: Vec<&str> = cmd.split_whitespace().collect();
+        let parts: Vec<String> = crate::defaults::default_tokenizer().tokenize(cmd);
         if parts.len() <= 1 && cmd.len() <= 5 {
             continue;
         }
         if let Some(ref name) = binary_name {
-            if parts.first().map(|w| *w == name.as_str()).unwrap_or(false) {
+            if parts.first().map(|w| w == name.as_str()).unwrap_or(false) {
                 continue;
             }
         }
@@ -89,7 +89,7 @@ pub fn bootstrap_from_history(conn: &Connection) {
 /// Stops before the first flag token (starting with `-`) and caps at
 /// `MAX_PREFIX_WORDS` words so quoted arguments never produce junk rows.
 pub fn upsert_prefixes(conn: &Connection, full_cmd: &str, ts: i64) {
-    let parts: Vec<&str> = full_cmd.split_whitespace().collect();
+    let parts: Vec<String> = crate::defaults::default_tokenizer().tokenize(full_cmd);
     let mut temp = String::new();
     let mut word_count = 0usize;
 

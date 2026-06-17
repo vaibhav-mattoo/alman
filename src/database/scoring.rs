@@ -16,6 +16,18 @@ pub fn score(frequency: f64, last_access: i64, length: f64, now: i64) -> f64 {
     mult * length.powf(0.6) * frequency
 }
 
+pub trait RelevanceScorer: Send + Sync {
+    fn score(&self, frequency: f64, last_access: i64, length: f64, now: i64) -> f64;
+}
+
+pub struct RecencyFrequencyScorer;
+
+impl RelevanceScorer for RecencyFrequencyScorer {
+    fn score(&self, frequency: f64, last_access: i64, length: f64, now: i64) -> f64 {
+        crate::database::scoring::score(frequency, last_access, length, now)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

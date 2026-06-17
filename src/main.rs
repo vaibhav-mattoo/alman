@@ -3,6 +3,12 @@ mod database;
 mod ops;
 mod tui;
 mod shell;
+mod template;
+mod tokenize;
+mod defaults;
+mod registry;
+mod mining;
+mod render;
 
 use cli::arg_handler::parse_args;
 use cli::cli_data::Operation;
@@ -141,16 +147,13 @@ fn main() {
             println!("Default alias file path set to {}", cli_path_str.green());
         } else {
             // No subcommand and no path flag → launch TUI.
-            let file_path = alias_file_paths
-                .first()
-                .cloned()
-                .unwrap_or_else(get_default_alias_file_path);
             let db_path = get_db_path();
             let conn = match open(&db_path) {
                 Ok(c) => c,
                 Err(e) => { eprintln!("alman: DB error: {e}"); return; }
             };
-            if let Err(e) = run_tui(PathBuf::from(file_path), alias_file_paths, conn) {
+            crate::database::db::migrate_aliases_if_needed(&conn, &alias_file_paths);
+            if let Err(e) = run_tui(alias_file_paths, conn) {
                 eprintln!("{}", format!("TUI error: {}", e).red());
             }
         }
@@ -169,7 +172,10 @@ fn main() {
     // Open DB for subcommands that need it (all except Init, InitData, ListAliasFiles).
     let open_conn = || -> Option<rusqlite::Connection> {
         match open(&get_db_path()) {
-            Ok(c) => Some(c),
+            Ok(c) => {
+                crate::database::db::migrate_aliases_if_needed(&c, &alias_file_paths);
+                Some(c)
+            }
             Err(e) => { eprintln!("alman: DB error: {e}"); None }
         }
     };
@@ -177,24 +183,30 @@ fn main() {
     match cli.operation.as_ref().unwrap() {
         Operation::Add { alias, command } => {
             let Some(conn) = open_conn() else { return; };
-            match apply_add(&conn, &alias_file_paths, alias, command) {
+            match apply_add(&conn, alias, command) {
                 Ok(_) => print_source_message(),
                 Err(e) => eprintln!("{}", format!("Error adding alias: {}", e).red()),
             }
         }
         Operation::Remove { alias } => {
             let Some(conn) = open_conn() else { return; };
-            match apply_remove(&conn, &alias_file_paths, alias) {
-                Ok(ApplyOutcome::NotFound { alias }) => {
-                    eprintln!("{}", format!("Alias '{}' not found.", alias).red());
+            match apply_remove(&conn, alias) {
+                Ok(ApplyOutcome::NotFound { name }) => {
+                    eprintln!("{}", format!("Alias '{}' not found.", name).red());
                 }
                 Ok(_) => print_source_message(),
                 Err(e) => eprintln!("{}", format!("Error removing alias: {}", e).red()),
             }
         }
         Operation::List => {
-            use ops::alias_ops::get_aliases_from_multiple_files;
-            let aliases = get_aliases_from_multiple_files(&alias_file_paths);
+            let Some(conn) = open_conn() else { return; };
+            let defs = registry::list_definitions(&conn).unwrap_or_default();
+            let renderer = render::PosixRenderer;
+            use render::ShellRenderer;
+            let aliases: Vec<(String, String)> = defs
+                .iter()
+                .map(|d| (d.name.clone(), renderer.render_template_body(&d.template)))
+                .collect();
             if aliases.is_empty() {
                 println!("{}", "No aliases found.".yellow());
                 return;
@@ -205,19 +217,18 @@ fn main() {
             println!("{}", format!("│ {:<alias$} │ {:<cmd$} │", "ALIAS", "COMMAND", alias = max_alias_length, cmd = max_command_length).cyan());
             println!("{}", format!("├{:─<alias$}┼{:─<cmd$}┤", "", "", alias = max_alias_length + 2, cmd = max_command_length + 2).cyan());
             for (alias, command) in &aliases {
-                println!("│ {} │ {} │",
-                    format!("{:<width$}", alias, width = max_alias_length).cyan(),
-                    format!("{:<width$}", command, width = max_command_length),
-                );
+                let alias_cell = format!("{:<width$}", alias, width = max_alias_length).cyan();
+                let cmd_cell = format!("{:<width$}", command, width = max_command_length);
+                println!("│ {} │ {} │", alias_cell, cmd_cell);
             }
             println!("{}", format!("└{:─<alias$}┴{:─<cmd$}┘", "", "", alias = max_alias_length + 2, cmd = max_command_length + 2).cyan());
-            println!("{}", format!("Total: {} alias(es) across {} file(s)", aliases.len(), alias_file_paths.len()).green());
+            println!("{}", format!("Total: {} alias(es)", aliases.len()).green());
         }
         Operation::Change { old_alias, new_alias } => {
             let Some(conn) = open_conn() else { return; };
-            match apply_change(&conn, &alias_file_paths, old_alias, new_alias) {
-                Ok(ApplyOutcome::NotFound { alias }) => {
-                    eprintln!("{}", format!("Alias '{}' not found.", alias).red());
+            match apply_change(&conn, old_alias, new_alias) {
+                Ok(ApplyOutcome::NotFound { name }) => {
+                    eprintln!("{}", format!("Alias '{}' not found.", name).red());
                 }
                 Ok(_) => print_source_message(),
                 Err(e) => eprintln!("{}", format!("Error changing alias: {}", e).red()),
@@ -275,11 +286,8 @@ fn main() {
             println!("{}", format!("Deleted suggestions for: {}", alias).yellow());
         }
         Operation::Tui => {
-            let tui_path = cli.alias_file_path.clone().unwrap_or_else(|| {
-                alias_file_paths.first().unwrap_or(&get_default_alias_file_path()).into()
-            });
             let Some(conn) = open_conn() else { return; };
-            if let Err(e) = run_tui(tui_path, alias_file_paths, conn) {
+            if let Err(e) = run_tui(alias_file_paths, conn) {
                 eprintln!("{}", format!("TUI error: {}", e).red());
             }
         }
@@ -306,6 +314,7 @@ fn main() {
                 Ok(c) => c,
                 Err(e) => { eprintln!("Failed to initialize database: {}", e); return; }
             };
+            crate::database::db::migrate_aliases_if_needed(&conn, &alias_file_paths);
             compact(&conn);
             let default_alias_path = get_default_alias_file_path();
             if !Path::new(&default_alias_path).exists() {
@@ -320,6 +329,99 @@ fn main() {
         }
         Operation::ListAliasFiles => {
             // Handled in the fast-path above; unreachable here.
+        }
+        Operation::RenderAliases { shell } => {
+            let Some(conn) = open_conn() else { return; };
+            let renderer = crate::defaults::renderer_for(shell);
+            let defs = crate::registry::list_definitions(&conn).unwrap_or_default();
+            for def in &defs {
+                println!("{}", renderer.render_definition(def));
+            }
+        }
+        Operation::ExportAliases => {
+            let Some(conn) = open_conn() else { return; };
+            let renderer = crate::render::PosixRenderer;
+            use crate::render::ShellRenderer;
+            let defs = crate::registry::list_definitions(&conn).unwrap_or_default();
+            for def in &defs {
+                println!("{}", renderer.render_definition(def));
+            }
+        }
+        Operation::GetTemplates { num } => {
+            let Some(conn) = open_conn() else { return; };
+            let limit = num.unwrap_or(10);
+            let tokenizer = crate::defaults::default_tokenizer();
+            let events: Vec<String> = {
+                let mut stmt = match conn
+                    .prepare("SELECT command FROM events ORDER BY ts DESC LIMIT 2000")
+                {
+                    Ok(s) => s,
+                    Err(e) => { eprintln!("{e}"); return; }
+                };
+                let rows = stmt.query_map([], |r| r.get(0));
+                let collected = match rows {
+                    Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+                    Err(e) => { eprintln!("{e}"); return; }
+                };
+                collected
+            };
+            let tokenized: Vec<Vec<String>> = events
+                .iter()
+                .map(|e| tokenizer.tokenize(e))
+                .filter(|t| !t.is_empty())
+                .collect();
+            let miner = crate::defaults::default_miner();
+            let templates = miner.mine(&tokenized);
+            let renderer = crate::render::PosixRenderer;
+            use crate::registry::DefinitionKind;
+            use crate::render::ShellRenderer;
+            use crate::template::TemplatePart;
+            println!("{}", format!("┌{:─<40}┬{:─<60}┬{:─<8}┬{:─<8}┐", "", "", "", "").cyan());
+            println!("{}", format!("│ {:<38} │ {:<58} │ {:>6} │ {:>6} │", "KIND/NAME", "DEFINITION", "SUPPORT", "SCORE").cyan());
+            println!("{}", format!("├{:─<40}┼{:─<60}┼{:─<8}┼{:─<8}┤", "", "", "", "").cyan());
+            for mt in templates.iter().take(limit) {
+                let kind = if mt.template.is_zero_slot() || mt.template.only_trailing_single_slot() {
+                    DefinitionKind::Alias
+                } else {
+                    DefinitionKind::Function
+                };
+                let name = mt
+                    .template
+                    .parts
+                    .iter()
+                    .find_map(|p| {
+                        if let TemplatePart::Literal(s) = p {
+                            Some(s.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("?")
+                    .chars()
+                    .take(10)
+                    .collect::<String>();
+                let def = crate::registry::Definition {
+                    name: name.clone(),
+                    kind: kind.clone(),
+                    template: mt.template.clone(),
+                };
+                let rendered = renderer.render_definition(&def);
+                println!(
+                    "│ {:<38} │ {:<58} │ {:>6} │ {:>6.0} │",
+                    format!(
+                        "{} {}",
+                        match &kind {
+                            DefinitionKind::Alias => "alias",
+                            DefinitionKind::Function => "fn",
+                        },
+                        name
+                    ),
+                    &rendered[..rendered.len().min(58)],
+                    mt.stats.support,
+                    mt.score,
+                );
+            }
+            println!("{}", format!("└{:─<40}┴{:─<60}┴{:─<8}┴{:─<8}┘", "", "", "", "").cyan());
         }
     }
 }

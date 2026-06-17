@@ -6,9 +6,7 @@ set -gx ALMAN_CONFIG_DIR "{{ config_dir }}"
 set -gx ALMAN_BIN "{{ app_path }}"
 
 function __alman_source_aliases
-    for __alman_file in ("{{ app_path }}" list-alias-files 2>/dev/null)
-        test -f "$__alman_file" && source "$__alman_file"
-    end
+    "{{ app_path }}" render-aliases fish 2>/dev/null | source
 end
 
 function __alman_preexec --on-event fish_preexec
