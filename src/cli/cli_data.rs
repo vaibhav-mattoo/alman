@@ -17,7 +17,7 @@ use std::path::PathBuf;
   alman tui"
 )]
 pub struct Cli {
-    /// Path to the alias file to use (default: ~/.alman/aliases)
+    /// Path to the alias file to use (default: ~/.config/alman/aliases)
     #[arg(short, long, value_name = "ALIAS_FILE_PATH", help = "Path to the alias file to use")]
     pub alias_file_path: Option<PathBuf>,
 
